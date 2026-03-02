@@ -1,6 +1,6 @@
 const mysql = require("mysql2");
 
-const db = mysql.createConnection({
+const db = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
@@ -8,14 +8,16 @@ const db = mysql.createConnection({
   port: process.env.MYSQLPORT,
   ssl: {
     rejectUnauthorized: false
-  }
+  },
+  connectionLimit: 10
 });
 
-db.connect((err) => {
+db.getConnection((err, connection) => {
   if (err) {
     console.error("❌ Database connection failed:", err);
   } else {
     console.log("✅ Connected to Aiven MySQL 🚀");
+    connection.release();
   }
 });
 
