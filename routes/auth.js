@@ -17,8 +17,8 @@ router.post('/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         db.query(
-            "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-            [name, email, hashedPassword],
+            "INSERT INTO users (name, email, password, language) VALUES (?, ?, ?, ?)",
+            [name, email, hashedPassword, 'ar'],
             (err, result) => {
 
                 if (err) {
@@ -97,3 +97,24 @@ router.post('/login', (req, res) => {
 
 
 module.exports = router;
+// =========================
+// UPDATE LANGUAGE
+// =========================
+router.post('/update-language', (req, res) => {
+    const { userId, language } = req.body;
+
+    const sql = "UPDATE users SET language = ? WHERE id = ?";
+    db.query(sql, [language, userId], (err, result) => {
+        if (err) {
+            return res.status(500).json({
+                success: false,
+                message: "Database error"
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Language updated successfully"
+        });
+    });
+});
