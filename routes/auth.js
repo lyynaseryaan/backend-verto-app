@@ -4,23 +4,17 @@ const db = require('../db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-
-// =========================
 // REGISTER
-// =========================
 router.post('/register', async (req, res) => {
-
     const { name, email, password } = req.body;
 
     try {
-
         const hashedPassword = await bcrypt.hash(password, 10);
 
         db.query(
             "INSERT INTO users (name, email, password, language) VALUES (?, ?, ?, ?)",
             [name, email, hashedPassword, 'ar'],
             (err, result) => {
-
                 if (err) {
                     return res.status(400).json({
                         success: false,
@@ -28,14 +22,21 @@ router.post('/register', async (req, res) => {
                     });
                 }
 
+                // 🔥 توليد token للمستخدم الجديد
+                const token = jwt.sign(
+                    { id: result.insertId, email: email },
+                    "SECRET_KEY",
+                    { expiresIn: "1d" }
+                );
+
+                // 🔹 رجاع success و token مع بعض
                 return res.status(201).json({
                     success: true,
-                    message: "User registered successfully"
+                    message: "User registered successfully",
+                    token: token
                 });
-
             }
         );
-
     } catch (error) {
         res.status(500).json({
             success: false,
@@ -43,8 +44,6 @@ router.post('/register', async (req, res) => {
         });
     }
 });
-
-
 // =========================
 // LOGIN
 // =========================
@@ -54,7 +53,6 @@ router.post('/login', (req, res) => {
     const sql = "SELECT * FROM users WHERE email = ?";
 
     db.query(sql, [email], async (err, result) => {
-
         if (err) {
             return res.status(500).json({
                 success: false,
@@ -80,7 +78,6 @@ router.post('/login', (req, res) => {
             });
         }
 
-        // 🔥 Token optional (مهم للمستقبل)
         const token = jwt.sign(
             { id: user.id, email: user.email },
             "SECRET_KEY",
@@ -89,32 +86,54 @@ router.post('/login', (req, res) => {
 
         res.status(200).json({
             success: true,
-            token: token,
-            message: "Login successful"
+            message: "Login successful",
+            token: token
         });
     });
 });
 
-
-module.exports = router;
 // =========================
-// UPDATE LANGUAGE
+// UPDATE LANGUAGE (Protected)
 // =========================
 router.post('/update-language', (req, res) => {
-    const { userId, language } = req.body;
+    const authHeader = req.headers["authorization"];
 
-    const sql = "UPDATE users SET language = ? WHERE id = ?";
-    db.query(sql, [language, userId], (err, result) => {
+    if (!authHeader) {
+        return res.status(401).json({
+            success: false,
+            error: "No token provided"
+        });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    jwt.verify(token, "SECRET_KEY", (err, decoded) => {
         if (err) {
-            return res.status(500).json({
+            return res.status(403).json({
                 success: false,
-                message: "Database error"
+                error: "Invalid token"
             });
         }
 
-        return res.status(200).json({
-            success: true,
-            message: "Language updated successfully"
+        const userId = decoded.id;
+        const { language } = req.body;
+
+        const sql = "UPDATE users SET language = ? WHERE id = ?";
+
+        db.query(sql, [language, userId], (err, result) => {
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    error: "Database error"
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Language updated successfully"
+            });
         });
     });
 });
+
+module.exports = router;
