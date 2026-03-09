@@ -22,7 +22,6 @@ router.post('/register', async (req, res) => {
                     });
                 }
 
-                // 🔥 توليد token للمستخدم الجديد
                 const token = jwt.sign(
                     { id: result.insertId, email: email },
                     "SECRET_KEY",
@@ -59,7 +58,6 @@ router.post('/login', (req, res) => {
                 message: "Database error"
             });
         }
-
         if (result.length === 0) {
             return res.status(400).json({
                 success: false,
