@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require("../db");
 
 // GET QUESTION
-router.get("/question/:id", (req,res)=>{
+router.get("quizgit/question/:id", (req,res)=>{
   const id = req.params.id;
   db.query(
     "SELECT id,question,option1,option2,option3,option4 FROM questions WHERE id=?",
