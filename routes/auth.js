@@ -4,7 +4,9 @@ const db = require('../db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+// =========================
 // REGISTER
+// =========================
 router.post('/register', async (req, res) => {
     const { name, email, password } = req.body;
 
@@ -24,11 +26,10 @@ router.post('/register', async (req, res) => {
 
                 const token = jwt.sign(
                     { id: result.insertId, email: email },
-                    "SECRET_KEY",
+                    process.env.JWT_SECRET,  // ✅ استخدام secret من env
                     { expiresIn: "1d" }
                 );
 
-                // 🔹 رجاع success و token مع بعض
                 return res.status(201).json({
                     success: true,
                     message: "User registered successfully",
@@ -43,6 +44,7 @@ router.post('/register', async (req, res) => {
         });
     }
 });
+
 // =========================
 // LOGIN
 // =========================
@@ -78,7 +80,7 @@ router.post('/login', (req, res) => {
 
         const token = jwt.sign(
             { id: user.id, email: user.email },
-            "SECRET_KEY",
+            process.env.JWT_SECRET,  // ✅ استخدام secret من env
             { expiresIn: "1d" }
         );
 
@@ -105,7 +107,7 @@ router.post('/update-language', (req, res) => {
 
     const token = authHeader.split(" ")[1];
 
-    jwt.verify(token, "SECRET_KEY", (err, decoded) => {
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {  // ✅ استخدام secret من env
         if (err) {
             return res.status(403).json({
                 success: false,

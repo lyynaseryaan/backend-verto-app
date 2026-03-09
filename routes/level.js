@@ -11,8 +11,7 @@ router.post('/update-level', async (req, res) => {
   if (!token) return res.status(401).json({ success: false, error: 'Invalid token' });
 
   try {
-    // تحقق من token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET); // استعمال env
     const user_id = decoded.id;
 
     const { selected_level } = req.body;
