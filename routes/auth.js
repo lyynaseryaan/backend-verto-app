@@ -13,9 +13,11 @@ router.post('/register', async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        const role = "student"; // ✅ أي تسجيل جديد يكون طالب
+
         db.query(
-            "INSERT INTO users (name, email, password, language) VALUES (?, ?, ?, ?)",
-            [name, email, hashedPassword, 'ar'],
+            "INSERT INTO users (name, email, password, language, role) VALUES (?, ?, ?, ?, ?)",
+            [name, email, hashedPassword, 'ar', role],
             (err, result) => {
                 if (err) {
                     return res.status(400).json({
@@ -25,15 +27,20 @@ router.post('/register', async (req, res) => {
                 }
 
                 const token = jwt.sign(
-                    { id: result.insertId, email: email },
-                    process.env.JWT_SECRET,  // ✅ استخدام secret من env
+                    { 
+                        id: result.insertId, 
+                        email: email,
+                        role: role   // ✅ إضافة role داخل التوكن
+                    },
+                    process.env.JWT_SECRET,
                     { expiresIn: "1d" }
                 );
 
                 return res.status(201).json({
                     success: true,
                     message: "User registered successfully",
-                    token: token
+                    token: token,
+                    role: role  // ✅ يرجع role
                 });
             }
         );
@@ -60,6 +67,7 @@ router.post('/login', (req, res) => {
                 message: "Database error"
             });
         }
+
         if (result.length === 0) {
             return res.status(400).json({
                 success: false,
@@ -79,15 +87,20 @@ router.post('/login', (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: user.id, email: user.email },
-            process.env.JWT_SECRET,  // ✅ استخدام secret من env
+            { 
+                id: user.id, 
+                email: user.email,
+                role: user.role   // ✅ إضافة role داخل token
+            },
+            process.env.JWT_SECRET,
             { expiresIn: "1d" }
         );
 
         res.status(200).json({
             success: true,
             message: "Login successful",
-            token: token
+            token: token,
+            role: user.role   // ✅ يرجع role للفرونت
         });
     });
 });
@@ -107,7 +120,7 @@ router.post('/update-language', (req, res) => {
 
     const token = authHeader.split(" ")[1];
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {  // ✅ استخدام secret من env
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
         if (err) {
             return res.status(403).json({
                 success: false,
@@ -126,9 +139,7 @@ router.post('/update-language', (req, res) => {
                     success: false,
                     error: "Database error"
                 });
-            }
-
-            return res.status(200).json({
+            }return res.status(200).json({
                 success: true,
                 message: "Language updated successfully"
             });
