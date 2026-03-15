@@ -5,7 +5,7 @@ const cors = require('cors');
 // Routes
 const authRoutes = require('./routes/auth');
 const levelRoutes = require('./routes/level');
-const quizRoutes = require('./routes/quiz');
+const {router:quizRoutes} = require('./routes/quiz');
 const taskRoutes = require('./routes/tasks'); 
 const resultRoutes=require('./routes/resultRoute');
 

@@ -124,4 +124,4 @@ router.post("/quiz/check", verifyToken, (req, res) => {
 
 });
 
-module.exports = router;
+module.exports = {router,verifyToken};
