@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../db");
-const { verifyToken } = require("./quizRoutes"); // middleware من quizRoutes
+const { verifyToken } = require("./quiz"); // middleware من quizRoutes
 
 // ======================
 // GET RESULT & SAVE
