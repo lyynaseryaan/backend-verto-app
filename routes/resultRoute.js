@@ -62,7 +62,7 @@ router.get("/result", verifyToken, (req, res) => {
       Science: subjects.Science.total ? subjects.Science.correct / subjects.Science.total : 0,
     };
 
-    // إعادة JSON للـ frontend
+    // إعادة JSON jjللـ frontend
     res.json({
       correct,
       total,
