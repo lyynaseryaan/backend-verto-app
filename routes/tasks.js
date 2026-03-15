@@ -125,5 +125,26 @@ router.post('/start/:id', (req, res) => {
   });
 
 });
+// ================= COMPLETE TASK =================
+router.post('/complete/:id', (req, res) => {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader) return res.status(401).json({ success: false, message: "No token provided" });
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(403).json({ success: false, message: "Invalid token" });
+
+    const userId = decoded.id;
+    const taskId = req.params.id;
+
+    const sql = "UPDATE tasks SET status = 'completed' WHERE id = ? AND user_id = ?";
+    db.query(sql, [taskId, userId], (err, result) => {
+      if (err) return res.status(500).json({ success: false, message: "Database error" });
+
+      res.status(200).json({ success: true, message: "Task marked as completed" });
+    });
+  });
+});
 
 module.exports = router;
