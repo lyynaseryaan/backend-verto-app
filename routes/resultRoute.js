@@ -6,7 +6,7 @@ const { verifyToken } = require("./quiz"); // middleware من quizRoutes
 // ======================
 // GET RESULT & SAVE
 // ======================
-router.get("/result", verifyToken, (req, res) => {
+router.get("/", verifyToken, (req, res) => {
   const studentId = req.userId;
 
   // جلب كل الإجابات تاع الطالب
