@@ -7,7 +7,7 @@ const authRoutes = require('./routes/auth');
 const levelRoutes = require('./routes/level');
 const quizRoutes = require('./routes/quiz');
 const taskRoutes = require('./routes/tasks'); 
-const resultRoutes=require('./routes/result')
+const resultRoutes=require('./routes/result');
 
 const app = express();
 
