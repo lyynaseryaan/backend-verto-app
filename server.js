@@ -7,7 +7,7 @@ const authRoutes = require('./routes/auth');
 const levelRoutes = require('./routes/level');
 const quizRoutes = require('./routes/quiz');
 const taskRoutes = require('./routes/tasks'); 
-const ResultRoutes= require('./routes/Result');// ✅ أضفنا tasks
+const resultRoutes=require('./routes/result')
 
 const app = express();
 
@@ -19,7 +19,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api', levelRoutes);
 app.use('/api', quizRoutes);
 app.use('/api/tasks', taskRoutes); // ✅ route تاع tasks
-app.use('/api/Result', ResultRoutes);
+app.use('/api/result', resultRoutes);
 
 app.listen(process.env.PORT, () => {
   console.log('Server running on port ${process.env.PORT}');
