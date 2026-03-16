@@ -28,6 +28,14 @@ function verifyToken(req, res, next) {
     }
 
     req.userId = decoded.id;
+    req.role = decoded.role;   // 👈 نجيب role
+
+    // 👇 student فقط
+    if (req.role !== "student") {
+      return res.status(403).json({
+        message: "Only students can access quiz"
+      });
+    }
 
     next();
   });
@@ -80,24 +88,18 @@ router.post("/quiz/check", verifyToken, (req, res) => {
     });
   }
 
-  console.log("Student:", studentId);
-  console.log("Question:", questionId);
-  console.log("Answer:", selectedOption);
-
   const insertSql = `
   INSERT INTO student_answers
   (student_id, question_id, selected_option)
   VALUES (?, ?, ?)
   `;
 
-  db.query(insertSql, [studentId, questionId, selectedOption], (err, result) => {
+  db.query(insertSql, [studentId, questionId, selectedOption], (err) => {
 
     if (err) {
       console.log("INSERT ERROR:", err);
       return res.status(500).json({ error: err.message });
     }
-
-    console.log("INSERT SUCCESS:", result);
 
     const checkSql = `
     SELECT correct_option
@@ -124,4 +126,4 @@ router.post("/quiz/check", verifyToken, (req, res) => {
 
 });
 
-module.exports = {router,verifyToken};
+module.exports = { router, verifyToken };

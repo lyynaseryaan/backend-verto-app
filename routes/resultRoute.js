@@ -3,14 +3,14 @@ const router = express.Router();
 const db = require("../db");
 const { verifyToken } = require("./quiz");
 
+
 // ======================
-// GET RESULT & SAVE
+// GET RESULT
 // ======================
 router.get("/", verifyToken, (req, res) => {
 
   const studentId = req.userId;
 
-  // نجيب كل الإجابات مع معلومات السؤال
   const sql = `
     SELECT q.subject, q.correct_option, sa.selected_option
     FROM student_answers sa
@@ -22,7 +22,6 @@ router.get("/", verifyToken, (req, res) => {
 
     if (err) return res.status(500).json({ error: err.message });
 
-    // نحسب عدد الأسئلة الحقيقي
     db.query("SELECT COUNT(*) AS total FROM questions", (err, countResult) => {
 
       if (err) return res.status(500).json({ error: err.message });
@@ -56,17 +55,14 @@ router.get("/", verifyToken, (req, res) => {
 
       const accuracy = total ? correct / total : 0;
 
-      // تحديد المستوى
       let level = "Beginner";
 
       if (accuracy >= 0.7) {
         level = "Advanced";
-      } 
-      else if (accuracy >= 0.4) {
+      } else if (accuracy >= 0.4) {
         level = "Intermediate";
       }
 
-      // حساب نسبة كل مادة
       const subjectResults = {
 
         Mathematics: subjects.Mathematics.total
@@ -82,7 +78,6 @@ router.get("/", verifyToken, (req, res) => {
           : 0,
       };
 
-      // حفظ النتيجة
       const insertResult = `
         INSERT INTO student_results
         (student_id, correct, total, accuracy, level)
@@ -101,7 +96,6 @@ router.get("/", verifyToken, (req, res) => {
         }
       );
 
-      // إرسال النتيجة للـ Flutter
       res.json({
         correct,
         total,
