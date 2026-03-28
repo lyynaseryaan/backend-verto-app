@@ -100,8 +100,9 @@ const fileFilter = (req, file, cb) => {
   if ((file.fieldname.startsWith('pdf_course') || file.fieldname.startsWith('pdf_exercise')) && pdfTypes.test(ext)) {
   return cb(null, true);
 }
-  }
-  cb(new Error(`Invalid file type for field "${file.fieldname}"`));
+cb(new Error(`Invalid file type for field "${file.fieldname}"`));
+  };
+  
 
 
 // Upload limits
