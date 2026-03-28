@@ -505,7 +505,4 @@ router.post('/:id/levels', auth, (req, res) => {
   });
 });
 
-const multer = require('multer');
-const path = require('path');
-
 module.exports = router;
