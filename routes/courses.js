@@ -94,9 +94,12 @@ const fileFilter = (req, file, cb) => {
   const ext        = path.extname(file.originalname).toLowerCase().replace('.', '');
 
   if (file.fieldname === 'image' && imageTypes.test(ext)) return cb(null, true);
-  if (file.fieldname === 'video_file' && videoTypes.test(ext)) return cb(null, true);
-  if (['pdf_course', 'pdf_exercise'].includes(file.fieldname) && pdfTypes.test(ext)) {
-    return cb(null, true);
+  if (file.fieldname.startsWith('video_file') && videoTypes.test(ext)) {
+  return cb(null, true);
+}
+  if ((file.fieldname.startsWith('pdf_course') || file.fieldname.startsWith('pdf_exercise')) && pdfTypes.test(ext)) {
+  return cb(null, true);
+}
   }
   cb(new Error(`Invalid file type for field "${file.fieldname}"`));
 };
