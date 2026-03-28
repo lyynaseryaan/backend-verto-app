@@ -102,7 +102,7 @@ const fileFilter = (req, file, cb) => {
 }
   }
   cb(new Error(`Invalid file type for field "${file.fieldname}"`));
-};
+
 
 // Upload limits
 const upload = multer({
