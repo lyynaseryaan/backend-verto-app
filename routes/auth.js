@@ -26,9 +26,25 @@ router.post('/register', async (req, res) => {
                     });
                 }
 
+                const userId = result.insertId;
+
+                // ✅ إضافة الطالب تلقائياً في جدول students
+                if (role === "student") {
+                    db.query(
+                        "INSERT INTO students (user_id, current_level) VALUES (?, ?)",
+                        [userId, 'Beginner'],
+                        (err2) => {
+                            if (err2) {
+                                console.error("Error inserting into students:", err2);
+                                // ممكن نكمل ونرجع نجاح التسجيل رغم الخطأ في students
+                            }
+                        }
+                    );
+                }
+
                 const token = jwt.sign(
                     { 
-                        id: result.insertId, 
+                        id: userId, 
                         email: email,
                         role: role   // ✅ إضافة role داخل التوكن
                     },
