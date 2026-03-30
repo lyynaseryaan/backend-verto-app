@@ -46,7 +46,8 @@ router.post('/register', async (req, res) => {
                     { 
                         id: userId, 
                         email: email,
-                        role: role   // ✅ إضافة role داخل التوكن
+                        role: role  ,
+                        name: name // ✅ إضافة role داخل التوكن
                     },
                     process.env.JWT_SECRET,
                     { expiresIn: "1d" }
@@ -106,7 +107,8 @@ router.post('/login', (req, res) => {
             { 
                 id: user.id, 
                 email: user.email,
-                role: user.role   // ✅ إضافة role داخل token
+                role: user.role ,
+                name :user.name , // ✅ إضافة role داخل token
             },
             process.env.JWT_SECRET,
             { expiresIn: "1d" }
