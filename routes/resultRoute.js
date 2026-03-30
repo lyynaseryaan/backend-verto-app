@@ -1,7 +1,7 @@
 // ============================================================
 //  resultRoute.js  –  Verto LMS
-//  ✅ After calculating level → saves it to students table
-//     so the dashboard can read it immediately without re-login
+//  ✅ After calculating level → saves it to student_results
+//     and updates current_level in students table
 // ============================================================
 
 const express = require("express");
@@ -70,11 +70,9 @@ router.get("/", verifyToken, (req, res) => {
         (err) => { if (err) console.error("Error saving result:", err); }
       );
 
-      // ✅ Save level to students table so dashboard reads it directly
-      // Run this SQL first if column doesn't exist:
-      // ALTER TABLE students ADD COLUMN current_level VARCHAR(20) DEFAULT 'Beginner';
+      // ✅ Update level in students table via user_id
       db.query(
-        "UPDATE students SET current_level = ? WHERE id = ?",
+        "UPDATE students SET current_level = ? WHERE user_id = ?",
         [level, studentId],
         (err) => { if (err) console.error("Error updating student level:", err); }
       );
@@ -91,7 +89,7 @@ router.get("/", verifyToken, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get("/level", verifyToken, (req, res) => {
   db.query(
-    "SELECT current_level FROM students WHERE id = ?",
+    "SELECT current_level FROM students WHERE user_id = ?",
     [req.userId],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
