@@ -1,11 +1,7 @@
 // ============================================================
-//  studentCourse.js  –  Verto LMS
+//  studentCourse.js – Verto LMS
 //  Student-side course routes (read-only)
 //  Base path: /api/student/courses
-//
-//  Routes:
-//    GET /api/student/courses          → all courses (filtered by level)
-//    GET /api/student/courses/:id      → single course detail
 // ============================================================
 
 const express = require('express');
@@ -13,9 +9,7 @@ const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  JWT MIDDLEWARE — any logged-in user (student or teacher)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ JWT Middleware ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function auth(req, res, next) {
   const header = req.headers['authorization'];
   if (!header)
@@ -34,20 +28,9 @@ function auth(req, res, next) {
 
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses
-//  Returns all courses with content filtered by student level.
-//
-//  Query params:
-//    level  – "Beginner" | "Intermediate" | "Advanced"  (required)
-//    page   – page number, default 1
-//    limit  – items per page, default 20 (max 50)
-//    search – optional search term (filters by course title)
-//    type   – optional filter by course_type (e.g. "Science")
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ GET ALL COURSES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/', auth, (req, res) => {
-  const level = req.query.level;
-
+  const level = req.query.level ? req.query.level.trim() : '';
   if (!level || !VALID_LEVELS.includes(level)) {
     return res.status(400).json({
       success: false,
@@ -55,36 +38,29 @@ router.get('/', auth, (req, res) => {
     });
   }
 
-  const page   = Math.max(1, parseInt(req.query.page)  || 1);
+  const page   = Math.max(1, parseInt(req.query.page) || 1);
   const limit  = Math.min(50, parseInt(req.query.limit) || 20);
   const offset = (page - 1) * limit;
-  const search = req.query.search ? `%${req.query.search}%` : null;
-  const type   = req.query.type   || null;
+  const search = req.query.search ? `%${req.query.search.trim()}%` : null;
+  const type   = req.query.type ? req.query.type.trim() : null;
 
-  // ── Build WHERE clause dynamically ──────────────────────
   const conditions = [];
-  const countParams = [];
-  const mainParams  = [];
+  const params     = [];
 
   if (search) {
     conditions.push('c.title LIKE ?');
-    countParams.push(search);
-    mainParams.push(search);
+    params.push(search);
   }
   if (type) {
     conditions.push('c.course_type = ?');
-    countParams.push(type);
-    mainParams.push(type);
+    params.push(type);
   }
 
-  const where = conditions.length > 0
-    ? `WHERE ${conditions.join(' AND ')}`
-    : '';
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
-  // ── Count total for pagination meta ─────────────────────
+  // ── Count total courses for pagination ──
   const countSql = `SELECT COUNT(DISTINCT c.id) AS total FROM courses c ${where}`;
-
-  db.query(countSql, countParams, (countErr, countRows) => {
+  db.query(countSql, params, (countErr, countRows) => {
     if (countErr) {
       console.error('[studentCourse] count error:', countErr);
       return res.status(500).json({ success: false, message: 'Database error' });
@@ -92,7 +68,7 @@ router.get('/', auth, (req, res) => {
 
     const total = countRows[0].total;
 
-    // ── Main query ───────────────────────────────────────
+    // ── Main query ──
     const sql = `
       SELECT
         c.id,
@@ -117,17 +93,13 @@ router.get('/', auth, (req, res) => {
       ORDER BY c.created_at DESC
       LIMIT ? OFFSET ?`;
 
-    // level comes first (for the JOIN), then search/type filters, then pagination
-    const params = [level, ...mainParams, limit, offset];
-
-    db.query(sql, params, (err, rows) => {
+    db.query(sql, [level, ...params, limit, offset], (err, rows) => {
       if (err) {
         console.error('[studentCourse] fetch error:', err);
         return res.status(500).json({ success: false, message: 'Database error' });
       }
 
-      const courses = rows.map(row => _shapeCourse(row));
-
+      const courses = rows.map(row => shapeCourse(row));
       return res.status(200).json({
         success: true,
         level,
@@ -143,15 +115,9 @@ router.get('/', auth, (req, res) => {
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id
-//  Returns a single course with content for the given level.
-//
-//  Query params:
-//    level  – required (same as above)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ GET SINGLE COURSE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id', auth, (req, res) => {
-  const level    = req.query.level;
+  const level    = req.query.level ? req.query.level.trim() : '';
   const courseId = parseInt(req.params.id);
 
   if (!level || !VALID_LEVELS.includes(level)) {
@@ -194,44 +160,42 @@ router.get('/:id', auth, (req, res) => {
       return res.status(500).json({ success: false, message: 'Database error' });
     }
 
-    if (rows.length === 0) {
+    if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
 
     return res.status(200).json({
       success: true,
       level,
-      course: _shapeCourse(rows[0]),
+      course: shapeCourse(rows[0]),
     });
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  HELPER — shapes a DB row into the API response format
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function _shapeCourse(row) {
+// ━━━ HELPER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function shapeCourse(row) {
   const hasLevelContent = row.level_id !== null;
 
   const lesson = hasLevelContent
     ? {
         level:           row.level,
-        video_url:       row.video_url        || null,
-        video_file_path: row.video_file_path  || null,
-        text_content:    row.text_content     || null,
-        quiz_note:       row.quiz_note        || null,
-        pdf_course:      row.pdf_course       || null,
-        pdf_exercice:    row.pdf_exercice     || null,
+        video_url:       row.video_url || null,
+        video_file_path: row.video_file_path || null,
+        text_content:    row.text_content || null,
+        quiz_note:       row.quiz_note || null,
+        pdf_course:      row.pdf_course || null,
+        pdf_exercice:    row.pdf_exercice || null,
       }
     : null;
 
   return {
     id:          row.id,
     title:       row.title,
-    description: row.description  || null,
-    course_type: row.course_type  || null,
-    image_path:  row.image_path   || null,
+    description: row.description || null,
+    course_type: row.course_type || null,
+    image_path:  row.image_path || null,
     created_at:  row.created_at,
-    has_content: hasLevelContent,   // ← Flutter يستخدمها لإظهار lock icon
+    has_content: hasLevelContent,
     chapters: row.chapter
       ? [
           {
