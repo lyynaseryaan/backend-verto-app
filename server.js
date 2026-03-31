@@ -28,5 +28,5 @@ app.listen(process.env.PORT, () => {
 const courseRoutes = require('./routes/courses');
 app.use('/api/courses', courseRoutes);
 
-const studentRoutes = require('./routes/student_courses');
-app.use('/api/student', studentRoutes);
+const studentCourseRoutes = require('./routes/studentCourse');
+app.use('/api/student/courses', studentCourseRoutes);
