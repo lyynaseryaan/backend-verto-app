@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-app.use('/uploads', express.static('uploads'));
+
 // Routes
 const authRoutes = require('./routes/auth');
 const levelRoutes = require('./routes/level');
@@ -10,6 +10,9 @@ const taskRoutes = require('./routes/tasks');
 const resultRoutes=require('./routes/resultRoute');
 
 const app = express();
+const path = require('path');
+// مهم زاف
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors());
 app.use(express.json());
