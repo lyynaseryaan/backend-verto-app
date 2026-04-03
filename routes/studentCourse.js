@@ -1,7 +1,6 @@
 // ============================================================
 //  studentCourse.js – Verto LMS
-//  Student-side course routes (read-only)
-//  Base path: /api/student/courses
+//  ✅ Returns full URLs for image_path, video_file_path, PDFs
 // ============================================================
 
 const express = require('express');
@@ -9,7 +8,6 @@ const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
 
-// ━━━ JWT Middleware ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function auth(req, res, next) {
   const header = req.headers['authorization'];
   if (!header)
@@ -19,7 +17,6 @@ function auth(req, res, next) {
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err)
       return res.status(403).json({ success: false, message: 'Invalid or expired token' });
-
     req.userId   = decoded.id;
     req.userRole = decoded.role;
     next();
@@ -27,6 +24,14 @@ function auth(req, res, next) {
 }
 
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
+
+// ✅ بنبنيو URL كامل لأي path نسبي
+function fullUrl(req, path) {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const clean = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  return `${req.protocol}://${req.get('host')}/${clean}`;
+}
 
 // ━━━ GET ALL COURSES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/', auth, (req, res) => {
@@ -52,7 +57,6 @@ router.get('/', auth, (req, res) => {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
-  // ── Count ──
   const countSql = `SELECT COUNT(DISTINCT c.id) AS total FROM courses c ${where}`;
   db.query(countSql, params, (countErr, countRows) => {
     if (countErr) {
@@ -62,17 +66,11 @@ router.get('/', auth, (req, res) => {
 
     const total = countRows[0].total;
 
-    // ── Main query ──
     const sql = `
       SELECT
-        c.id,
-        c.title,
-        c.description,
-        c.course_type,
-        c.chapter,
-        c.image_path,
-        c.created_at,
-        cl.id                AS level_id,
+        c.id, c.title, c.description, c.course_type, c.chapter,
+        c.image_path, c.created_at,
+        cl.id               AS level_id,
         cl.level,
         cl.video_url,
         cl.video_file_path,
@@ -102,7 +100,7 @@ router.get('/', auth, (req, res) => {
           total,
           totalPages: Math.ceil(total / limit),
         },
-        courses: rows.map(row => shapeCourse(row)),
+        courses: rows.map(row => shapeCourse(row, req)),
       });
     });
   });
@@ -126,14 +124,9 @@ router.get('/:id', auth, (req, res) => {
 
   const sql = `
     SELECT
-      c.id,
-      c.title,
-      c.description,
-      c.course_type,
-      c.chapter,
-      c.image_path,
-      c.created_at,
-      cl.id                AS level_id,
+      c.id, c.title, c.description, c.course_type, c.chapter,
+      c.image_path, c.created_at,
+      cl.id               AS level_id,
       cl.level,
       cl.video_url,
       cl.video_file_path,
@@ -152,48 +145,43 @@ router.get('/:id', auth, (req, res) => {
       console.error('[studentCourse] single fetch error:', err);
       return res.status(500).json({ success: false, message: 'Database error' });
     }
-
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
-
     return res.status(200).json({
       success: true,
       level,
-      course: shapeCourse(rows[0]),
+      course: shapeCourse(rows[0], req),
     });
   });
 });
 
-// ━━━ HELPER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function shapeCourse(row) {
+// ━━━ HELPER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function shapeCourse(row, req) {
   const hasLevelContent = row.level_id !== null;
 
   const lesson = hasLevelContent
     ? {
         level:           row.level,
-        video_url:       row.video_url       || null,
-        video_file_path: row.video_file_path || null,
-        text_content:    row.text_content    || null,
-        quiz_note:       row.quiz_note       || null,
-        pdf_course:      row.pdf_course      || null,
-        pdf_exercise:    row.pdf_exercise    || null,  // ✅ تصحيح
+        video_url:       row.video_url                    || null,
+        video_file_path: fullUrl(req, row.video_file_path) || null, // ✅ URL كامل
+        text_content:    row.text_content                 || null,
+        quiz_note:       row.quiz_note                    || null,
+        pdf_course:      fullUrl(req, row.pdf_course)      || null, // ✅ URL كامل
+        pdf_exercise:    fullUrl(req, row.pdf_exercise)    || null, // ✅ URL كامل
       }
     : null;
 
   return {
     id:          row.id,
     title:       row.title,
-    description: row.description || null,
-    course_type: row.course_type || null,
-    image_path:  row.image_path  || null,
+    description: row.description  || null,
+    course_type: row.course_type  || null,
+    image_path:  fullUrl(req, row.image_path) || null, // ✅ URL كامل
     created_at:  row.created_at,
     has_content: hasLevelContent,
     chapters: row.chapter
-      ? [{
-          chapter_name: row.chapter,
-          lessons: lesson ? [lesson] : [],
-        }]
+      ? [{ chapter_name: row.chapter, lessons: lesson ? [lesson] : [] }]
       : [],
   };
 }

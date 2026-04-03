@@ -11,11 +11,9 @@ const resultRoutes=require('./routes/resultRoute');
 
 const app = express();
 const path = require('path');
-// مهم زاف
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+console.log(__dirname);
 
-app.use(cors());
-app.use(express.json());
+app.use('/uploads', express.static('uploads'));
 
 // routes
 app.use('/api/auth', authRoutes);
