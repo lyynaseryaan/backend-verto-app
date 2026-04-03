@@ -11,7 +11,7 @@ const resultRoutes=require('./routes/resultRoute');
 
 const app = express();
 const path = require('path');
-console.log(__dirname);
+
 
 app.use('/uploads', express.static('uploads'));
 
