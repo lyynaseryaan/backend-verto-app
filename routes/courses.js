@@ -1,10 +1,13 @@
 // ============================================================
-//  course.js  –  Verto LMS Backend (Full Working Version)
-//  ✅ Compatible with Flutter frontend
-//  ✅ Edit mode working
-//  ✅ File uploads working
+//  course.js  –  Verto LMS Backend
+//  ✅ Fixed: level files assigned per-level, not shared
+//  ✅ Fixed: ON DUPLICATE KEY uses aliases (MySQL 8.0.20+ safe)
+//  ✅ Fixed: fileFilter uses anchored regex
+//  ✅ Fixed: detailed error logging
+//  ✅ Fixed: explicit GROUP BY for ONLY_FULL_GROUP_BY mode
+//  ✅ Fixed: null safety on all string fields in GET /:id
 // ============================================================
-
+ 
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
@@ -12,33 +15,29 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  MULTER — File Upload Configuration
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-// Ensure upload directories exist
+ 
 const UPLOAD_DIRS = [
   'uploads/courses/images',
   'uploads/courses/videos',
   'uploads/courses/pdfs',
 ];
-
+ 
 UPLOAD_DIRS.forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 });
-
-// Storage configuration
+ 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (file.fieldname === 'thumbnailFile') {
       cb(null, 'uploads/courses/images');
-    } else if (file.fieldname === 'videoFile') {
+    } else if (file.fieldname.startsWith('videoFile')) {
       cb(null, 'uploads/courses/videos');
-    } else if (file.fieldname === 'pdfCourseFile' || file.fieldname === 'pdfExerciseFile') {
-      cb(null, 'uploads/courses/pdfs');
     } else {
       cb(null, 'uploads/courses/pdfs');
     }
@@ -48,24 +47,27 @@ const storage = multer.diskStorage({
     cb(null, unique);
   },
 });
-
-// File type filter
+ 
+// ✅ Fixed: anchored regex prevents partial matches
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
-  
+ 
   if (file.fieldname === 'thumbnailFile') {
-    if (/jpeg|jpg|png|webp/.test(ext)) {
+    if (/^\.(jpeg|jpg|png|webp)$/.test(ext)) {
       cb(null, true);
     } else {
       cb(new Error('Only image files (JPEG, PNG, WEBP) are allowed for thumbnail'));
     }
-  } else if (file.fieldname === 'videoFile') {
-    if (/mp4|mov|avi|mkv|webm/.test(ext)) {
+  } else if (file.fieldname.startsWith('videoFile')) {
+    if (/^\.(mp4|mov|avi|mkv|webm)$/.test(ext)) {
       cb(null, true);
     } else {
       cb(new Error('Only video files (MP4, MOV, AVI, MKV, WEBM) are allowed'));
     }
-  } else if (file.fieldname === 'pdfCourseFile' || file.fieldname === 'pdfExerciseFile') {
+  } else if (
+    file.fieldname.startsWith('pdfCourseFile') ||
+    file.fieldname.startsWith('pdfExerciseFile')
+  ) {
     if (ext === '.pdf') {
       cb(null, true);
     } else {
@@ -75,24 +77,31 @@ const fileFilter = (req, file, cb) => {
     cb(null, true);
   }
 };
-
+ 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max
+  limits: { fileSize: 200 * 1024 * 1024 },
 });
-
-// Single image upload for course thumbnail
+ 
 const uploadCourseImage = upload.single('thumbnailFile');
-
-// Level files upload
+ 
+// ✅ Fixed: indexed field names so each level gets its OWN files
+// Flutter sends: videoFile_0, pdfCourseFile_0, pdfExerciseFile_0  (Beginner)
+//                videoFile_1, pdfCourseFile_1, pdfExerciseFile_1  (Intermediate)
+//                videoFile_2, pdfCourseFile_2, pdfExerciseFile_2  (Advanced)
 const uploadLevelFiles = upload.fields([
-  { name: 'videoFile', maxCount: 1 },
-  { name: 'pdfCourseFile', maxCount: 1 },
-  { name: 'pdfExerciseFile', maxCount: 1 },
+  { name: 'videoFile_0',       maxCount: 1 },
+  { name: 'videoFile_1',       maxCount: 1 },
+  { name: 'videoFile_2',       maxCount: 1 },
+  { name: 'pdfCourseFile_0',   maxCount: 1 },
+  { name: 'pdfCourseFile_1',   maxCount: 1 },
+  { name: 'pdfCourseFile_2',   maxCount: 1 },
+  { name: 'pdfExerciseFile_0', maxCount: 1 },
+  { name: 'pdfExerciseFile_1', maxCount: 1 },
+  { name: 'pdfExerciseFile_2', maxCount: 1 },
 ]);
-
-// Helper: Delete old file
+ 
 function deleteOldFile(filePath) {
   if (filePath && fs.existsSync(filePath)) {
     try {
@@ -103,7 +112,7 @@ function deleteOldFile(filePath) {
     }
   }
 }
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  JWT MIDDLEWARE — Teacher only
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -112,7 +121,6 @@ function auth(req, res, next) {
   if (!header) {
     return res.status(401).json({ success: false, message: 'No token provided' });
   }
-
   const token = header.split(' ')[1];
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
@@ -125,52 +133,53 @@ function auth(req, res, next) {
     next();
   });
 }
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses
-//  Create a new course with optional thumbnail
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/', auth, (req, res) => {
   uploadCourseImage(req, res, (uploadErr) => {
     if (uploadErr) {
       return res.status(400).json({ success: false, message: uploadErr.message });
     }
-
+ 
     const { title, description, courseType, chapter } = req.body;
-
+ 
     if (!title || title.trim() === '') {
       return res.status(400).json({ success: false, message: 'Title is required' });
     }
-
+ 
     const imagePath = req.file ? req.file.path.replace(/\\/g, '/') : null;
-
+ 
     const sql = `
       INSERT INTO courses (teacher_id, title, description, course_type, chapter, image_path)
       VALUES (?, ?, ?, ?, ?, ?)`;
-
+ 
     db.query(
       sql,
       [req.userId, title.trim(), description || null, courseType || null, chapter || null, imagePath],
       (err, result) => {
         if (err) {
           console.error('DB error creating course:', err);
-          return res.status(500).json({ success: false, message: 'Database error' });
+          return res.status(500).json({
+            success: false,
+            message: `Database error: ${err.sqlMessage || err.message}`,
+          });
         }
-
         res.status(201).json({
           success: true,
           message: 'Course created',
           courseId: result.insertId,
-          imagePath: imagePath,
+          imagePath,
         });
       }
     );
   });
 });
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses
-//  Get all courses for the authenticated teacher
+//  ✅ Fixed: explicit GROUP BY for ONLY_FULL_GROUP_BY sql_mode
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/', auth, (req, res) => {
   const sql = `
@@ -178,141 +187,154 @@ router.get('/', auth, (req, res) => {
       c.id,
       c.title,
       c.description,
-      c.course_type AS courseType,
+      c.course_type  AS courseType,
       c.chapter,
-      c.image_path AS imagePath,
-      c.created_at AS createdAt,
-      c.updated_at AS updatedAt,
-      COUNT(cl.id) AS levelsCount
+      c.image_path   AS imagePath,
+      c.created_at   AS createdAt,
+      c.updated_at   AS updatedAt,
+      COUNT(cl.id)   AS levelsCount
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.teacher_id = ?
-    GROUP BY c.id
+    GROUP BY
+      c.id, c.title, c.description, c.course_type,
+      c.chapter, c.image_path, c.created_at, c.updated_at
     ORDER BY c.created_at DESC`;
-
+ 
   db.query(sql, [req.userId], (err, rows) => {
     if (err) {
-      console.error('DB error fetching courses:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
+      console.error('=== DB ERROR GET /api/courses ===');
+      console.error('Code:', err.code, '| Message:', err.sqlMessage || err.message);
+      return res.status(500).json({
+        success: false,
+        message: `Database error: ${err.sqlMessage || err.message}`,
+      });
     }
     res.status(200).json({ success: true, courses: rows });
   });
 });
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/:id
-//  Get one course with all its levels
+//  ✅ Fixed: all string fields default to '' instead of null
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id', auth, (req, res) => {
   const sql = `
     SELECT
       c.id,
-      c.teacher_id AS teacherId,
+      c.teacher_id       AS teacherId,
       c.title,
       c.description,
-      c.course_type AS courseType,
+      c.course_type      AS courseType,
       c.chapter,
-      c.image_path AS imagePath,
-      c.created_at AS createdAt,
-      c.updated_at AS updatedAt,
-      cl.id AS levelId,
+      c.image_path       AS imagePath,
+      c.created_at       AS createdAt,
+      c.updated_at       AS updatedAt,
+      cl.id              AS levelId,
       cl.level,
-      cl.video_url AS videoUrl,
+      cl.video_url       AS videoUrl,
       cl.video_file_path AS videoFilePath,
-      cl.text_content AS textContent,
-      cl.quiz_note AS quizNote,
-      cl.pdf_course AS pdfCourse,
-      cl.pdf_exercise AS pdfExercise
+      cl.text_content    AS textContent,
+      cl.quiz_note       AS quizNote,
+      cl.pdf_course      AS pdfCourse,
+      cl.pdf_exercise    AS pdfExercise
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.id = ? AND c.teacher_id = ?`;
-
+ 
   db.query(sql, [req.params.id, req.userId], (err, rows) => {
     if (err) {
-      console.error('DB error fetching course:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
+      console.error('DB error fetching course detail:', err);
+      return res.status(500).json({
+        success: false,
+        message: `Database error: ${err.sqlMessage || err.message}`,
+      });
     }
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
-
+ 
     const course = {
-      id: rows[0].id,
-      teacherId: rows[0].teacherId,
-      title: rows[0].title,
-      description: rows[0].description,
-      courseType: rows[0].courseType,
-      chapter: rows[0].chapter,
-      imagePath: rows[0].imagePath,
-      createdAt: rows[0].createdAt,
-      updatedAt: rows[0].updatedAt,
+      id:          rows[0].id,
+      teacherId:   rows[0].teacherId,
+      title:       rows[0].title       || '',
+      description: rows[0].description || '',
+      courseType:  rows[0].courseType  || '',
+      chapter:     rows[0].chapter     || '',
+      imagePath:   rows[0].imagePath   || '',
+      createdAt:   rows[0].createdAt,
+      updatedAt:   rows[0].updatedAt,
       levels: rows
         .filter(r => r.levelId !== null)
         .map(r => ({
-          id: r.levelId,
-          level: r.level,
-          videoUrl: r.videoUrl,
-          videoFilePath: r.videoFilePath,
-          textContent: r.textContent,
-          quizNote: r.quizNote,
-          pdfCourse: r.pdfCourse,
-          pdfExercise: r.pdfExercise,
+          id:            r.levelId,
+          level:         r.level           || '',
+          videoUrl:      r.videoUrl        || '',
+          videoFilePath: r.videoFilePath   || '',
+          textContent:   r.textContent     || '',
+          quizNote:      r.quizNote        || '',
+          pdfCourse:     r.pdfCourse       || '',
+          pdfExercise:   r.pdfExercise     || '',
         })),
     };
-
+ 
     res.status(200).json({ success: true, course });
   });
 });
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  PUT /api/courses/:id
-//  Update basic course info and/or thumbnail
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.put('/:id', auth, (req, res) => {
   uploadCourseImage(req, res, (uploadErr) => {
     if (uploadErr) {
       return res.status(400).json({ success: false, message: uploadErr.message });
     }
-
-    // Get existing course
+ 
     db.query(
       'SELECT id, image_path FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
       (err, rows) => {
         if (err) {
-          console.error('DB error:', err);
-          return res.status(500).json({ success: false, message: 'Database error' });
+          return res.status(500).json({
+            success: false,
+            message: `Database error: ${err.sqlMessage || err.message}`,
+          });
         }
         if (rows.length === 0) {
           return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
         }
-
+ 
         const { title, description, courseType, chapter } = req.body;
-        
-        // Delete old image if a new one was uploaded
+ 
         if (req.file && rows[0].image_path) {
           deleteOldFile(rows[0].image_path);
         }
-        
-        const newImagePath = req.file ? req.file.path.replace(/\\/g, '/') : rows[0].image_path;
-
+ 
+        const newImagePath = req.file
+          ? req.file.path.replace(/\\/g, '/')
+          : rows[0].image_path;
+ 
         const sql = `
           UPDATE courses
-          SET title = COALESCE(?, title),
-              description = COALESCE(?, description),
-              course_type = COALESCE(?, course_type),
-              chapter = COALESCE(?, chapter),
-              image_path = ?
+          SET
+            title       = COALESCE(?, title),
+            description = COALESCE(?, description),
+            course_type = COALESCE(?, course_type),
+            chapter     = COALESCE(?, chapter),
+            image_path  = ?
           WHERE id = ? AND teacher_id = ?`;
-
+ 
         db.query(
           sql,
           [title || null, description || null, courseType || null,
            chapter || null, newImagePath, req.params.id, req.userId],
           (err2) => {
             if (err2) {
-              console.error('DB error updating course:', err2);
-              return res.status(500).json({ success: false, message: 'Database error' });
+              return res.status(500).json({
+                success: false,
+                message: `Database error: ${err2.sqlMessage || err2.message}`,
+              });
             }
             res.status(200).json({
               success: true,
@@ -325,48 +347,45 @@ router.put('/:id', auth, (req, res) => {
     );
   });
 });
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  DELETE /api/courses/:id
-//  Delete course and all associated files
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.delete('/:id', auth, (req, res) => {
-  // Get course files before deletion
   db.query(
     'SELECT image_path FROM courses WHERE id = ? AND teacher_id = ?',
     [req.params.id, req.userId],
     (err, rows) => {
       if (err) {
-        return res.status(500).json({ success: false, message: 'Database error' });
+        return res.status(500).json({
+          success: false,
+          message: `Database error: ${err.sqlMessage || err.message}`,
+        });
       }
       if (rows.length === 0) {
         return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
       }
-
-      // Get level files
+ 
       db.query(
         'SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ?',
         [req.params.id],
         (err2, levelRows) => {
           if (!err2 && levelRows) {
-            // Delete all level files
             levelRows.forEach(row => {
               deleteOldFile(row.video_file_path);
               deleteOldFile(row.pdf_course);
               deleteOldFile(row.pdf_exercise);
             });
           }
-
-          // Delete thumbnail
-          if (rows[0].image_path) {
-            deleteOldFile(rows[0].image_path);
-          }
-
-          // Delete the course (levels will be deleted by CASCADE)
+ 
+          if (rows[0].image_path) deleteOldFile(rows[0].image_path);
+ 
           db.query('DELETE FROM courses WHERE id = ?', [req.params.id], (err3) => {
             if (err3) {
-              console.error('DB error deleting course:', err3);
-              return res.status(500).json({ success: false, message: 'Database error' });
+              return res.status(500).json({
+                success: false,
+                message: `Database error: ${err3.sqlMessage || err3.message}`,
+              });
             }
             res.status(200).json({ success: true, message: 'Course deleted' });
           });
@@ -375,18 +394,28 @@ router.delete('/:id', auth, (req, res) => {
     }
   );
 });
-
+ 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses/:id/levels
-//  Add or update levels for a course
+//
+//  ✅ KEY FIX: Each level uses its own indexed file fields.
+//
+//  IMPORTANT — you must also update your Flutter CourseProvider
+//  to send files with indexed names:
+//    videoFile_0 / pdfCourseFile_0 / pdfExerciseFile_0  → Beginner
+//    videoFile_1 / pdfCourseFile_1 / pdfExerciseFile_1  → Intermediate
+//    videoFile_2 / pdfCourseFile_2 / pdfExerciseFile_2  → Advanced
+//
+//  IMPORTANT — run this SQL once on your database if not done:
+//    ALTER TABLE course_levels
+//      ADD UNIQUE KEY uq_course_level (course_id, level);
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:id/levels', auth, (req, res) => {
   uploadLevelFiles(req, res, async (uploadErr) => {
     if (uploadErr) {
       return res.status(400).json({ success: false, message: uploadErr.message });
     }
-
-    // Parse levels from request body
+ 
     let levels;
     try {
       levels = typeof req.body.levels === 'string'
@@ -395,83 +424,110 @@ router.post('/:id/levels', auth, (req, res) => {
     } catch (e) {
       return res.status(400).json({ success: false, message: 'Invalid levels format' });
     }
-
+ 
     if (!levels || !Array.isArray(levels) || levels.length === 0) {
       return res.status(400).json({ success: false, message: 'Levels array is required' });
     }
-
-    // Verify course ownership
+ 
     db.query(
       'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
       async (err, rows) => {
         if (err) {
-          return res.status(500).json({ success: false, message: 'Database error' });
+          return res.status(500).json({
+            success: false,
+            message: `Database error: ${err.sqlMessage || err.message}`,
+          });
         }
         if (rows.length === 0) {
           return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
         }
-
+ 
         const files = req.files || {};
-        const videoPath = files.videoFile ? files.videoFile[0].path.replace(/\\/g, '/') : null;
-        const pdfCoursePath = files.pdfCourseFile ? files.pdfCourseFile[0].path.replace(/\\/g, '/') : null;
-        const pdfExercisePath = files.pdfExerciseFile ? files.pdfExerciseFile[0].path.replace(/\\/g, '/') : null;
-
-        // Process each level
-        for (const level of levels) {
-          const { level: levelName, videoUrl, textContent, quizNote } = level;
-          
-          // Get existing files to delete old ones if being replaced
-          if (videoPath || pdfCoursePath || pdfExercisePath) {
-            const oldFiles = await new Promise((resolve) => {
+ 
+        try {
+          for (let i = 0; i < levels.length; i++) {
+            const { level: levelName, videoUrl, textContent, quizNote } = levels[i];
+ 
+            // ✅ Each level gets its own file by index
+            const videoFile    = files[`videoFile_${i}`]?.[0];
+            const pdfCourse    = files[`pdfCourseFile_${i}`]?.[0];
+            const pdfExercise  = files[`pdfExerciseFile_${i}`]?.[0];
+ 
+            const videoPath       = videoFile   ? videoFile.path.replace(/\\/g, '/')   : null;
+            const pdfCoursePath   = pdfCourse   ? pdfCourse.path.replace(/\\/g, '/')   : null;
+            const pdfExercisePath = pdfExercise ? pdfExercise.path.replace(/\\/g, '/') : null;
+ 
+            // Delete replaced files only
+            if (videoPath || pdfCoursePath || pdfExercisePath) {
+              const oldFiles = await new Promise((resolve) => {
+                db.query(
+                  'SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ? AND level = ?',
+                  [req.params.id, levelName],
+                  (e, result) => {
+                    if (e || !result || result.length === 0) resolve(null);
+                    else resolve(result[0]);
+                  }
+                );
+              });
+ 
+              if (oldFiles) {
+                if (videoPath && oldFiles.video_file_path)    deleteOldFile(oldFiles.video_file_path);
+                if (pdfCoursePath && oldFiles.pdf_course)     deleteOldFile(oldFiles.pdf_course);
+                if (pdfExercisePath && oldFiles.pdf_exercise) deleteOldFile(oldFiles.pdf_exercise);
+              }
+            }
+ 
+            // ✅ Fixed: row alias syntax for MySQL 8.0.20+
+            const sql = `
+              INSERT INTO course_levels
+                (course_id, level, video_url, video_file_path, text_content, quiz_note, pdf_course, pdf_exercise)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              AS new_row
+              ON DUPLICATE KEY UPDATE
+                video_url       = COALESCE(new_row.video_url,       video_url),
+                video_file_path = COALESCE(new_row.video_file_path, video_file_path),
+                text_content    = COALESCE(new_row.text_content,    text_content),
+                quiz_note       = COALESCE(new_row.quiz_note,       quiz_note),
+                pdf_course      = COALESCE(new_row.pdf_course,      pdf_course),
+                pdf_exercise    = COALESCE(new_row.pdf_exercise,    pdf_exercise)`;
+ 
+            await new Promise((resolve, reject) => {
               db.query(
-                'SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ? AND level = ?',
-                [req.params.id, levelName],
-                (err, result) => {
-                  if (err || !result || result.length === 0) resolve(null);
-                  else resolve(result[0]);
+                sql,
+                [
+                  req.params.id, levelName,
+                  videoUrl      || null,
+                  videoPath,
+                  textContent   || null,
+                  quizNote      || null,
+                  pdfCoursePath,
+                  pdfExercisePath,
+                ],
+                (err2) => {
+                  if (err2) {
+                    console.error(`DB error saving level "${levelName}":`, err2.sqlMessage || err2.message);
+                    reject(err2);
+                  } else {
+                    resolve();
+                  }
                 }
               );
             });
-
-            if (oldFiles) {
-              if (videoPath && oldFiles.video_file_path) deleteOldFile(oldFiles.video_file_path);
-              if (pdfCoursePath && oldFiles.pdf_course) deleteOldFile(oldFiles.pdf_course);
-              if (pdfExercisePath && oldFiles.pdf_exercise) deleteOldFile(oldFiles.pdf_exercise);
-            }
           }
-
-          const sql = `
-            INSERT INTO course_levels 
-              (course_id, level, video_url, video_file_path, text_content, quiz_note, pdf_course, pdf_exercise)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-              video_url = COALESCE(VALUES(video_url), video_url),
-              video_file_path = COALESCE(VALUES(video_file_path), video_file_path),
-              text_content = COALESCE(VALUES(text_content), text_content),
-              quiz_note = COALESCE(VALUES(quiz_note), quiz_note),
-              pdf_course = COALESCE(VALUES(pdf_course), pdf_course),
-              pdf_exercise = COALESCE(VALUES(pdf_exercise), pdf_exercise)`;
-
-          await new Promise((resolve, reject) => {
-            db.query(sql, [
-              req.params.id, levelName, videoUrl || null,
-              videoPath, textContent || null, quizNote || null,
-              pdfCoursePath, pdfExercisePath
-            ], (err2) => {
-              if (err2) reject(err2);
-              else resolve();
-            });
+ 
+          res.status(200).json({ success: true, message: 'Levels saved successfully' });
+ 
+        } catch (loopErr) {
+          console.error('Error in levels loop:', loopErr);
+          res.status(500).json({
+            success: false,
+            message: `Failed to save levels: ${loopErr.sqlMessage || loopErr.message}`,
           });
         }
-
-        res.status(200).json({
-          success: true,
-          message: 'Levels saved successfully'
-        });
       }
     );
   });
 });
-
+ 
 module.exports = router;
