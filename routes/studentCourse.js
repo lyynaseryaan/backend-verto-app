@@ -94,27 +94,24 @@ function shapeCourse(row, req) {
       }
     : null;
 
-  return {
+ // Inside routes/studentCourse.js - Change the return in shapeCourse:
+
+return {
     id:          row.id,
     title:       row.title,
     description: row.description  || null,
     course_type: row.course_type  || null,
-
-    // image_path — full URL so Flutter can use Image.network() directly
     image_path:  buildFullUrl(req, row.image_path) || null,
-
     created_at:  row.created_at,
+    
+    // CRITICAL: Ensure this is true if ANY content exists for this level
+    has_content: row.level_id !== null, 
 
-    // Flutter uses this to show lock icon without parsing chapters
-    has_content: hasLevelContent,
-
-    chapters: row.chapter
-      ? [{
+    chapters: row.chapter && row.level_id ? [{
           chapter_name: row.chapter,
-          lessons:      lesson ? [lesson] : [],
-        }]
-      : [],
-  };
+          lessons: lesson ? [lesson] : [],
+        }] : [],
+};
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
