@@ -12,23 +12,24 @@ const storage = new CloudinaryStorage({
   params: (req, file) => {
     if (file.fieldname === 'image') {
       return {
-        folder:          'verto/images',
-        resource_type:   'image',
-        allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+        folder:        'verto/images',
+        resource_type: 'image',
+        // ✅ حذفنا allowed_formats — Cloudinary يقبل كل الصور تلقائياً
+        format:        'jpg', // ✅ يحول كل صورة لـ jpg
       };
     }
     if (file.fieldname.startsWith('video_file')) {
       return {
-        folder:          'verto/videos',
-        resource_type:   'video',
-        allowed_formats: ['mp4', 'mov', 'avi', 'mkv', 'webm'],
+        folder:        'verto/videos',
+        resource_type: 'video',
+        // ✅ حذفنا allowed_formats — يقبل كل أنواع الفيديو
       };
     }
     // pdf_course_* و pdf_exercise_*
     return {
-      folder:          'verto/pdfs',
-      resource_type:   'raw',
-      allowed_formats: ['pdf'],
+      folder:        'verto/pdfs',
+      resource_type: 'raw',
+      // ✅ حذفنا allowed_formats — يقبل كل الملفات
     };
   },
 });
