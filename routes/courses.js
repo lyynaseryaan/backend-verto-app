@@ -1,8 +1,8 @@
 // ============================================================
-//  course.js  –  Verto LMS Backend (Corrected & Improved)
+//  course.js  –  Verto LMS Backend (Final Working Version)
 //  ✅ Compatible with Flutter frontend
-//  ✅ Edit mode working for both basic info and levels
-//  ✅ File uploads working
+//  ✅ Guaranteed Level Editing (Content Page Fix)
+//  ✅ File uploads and deletion working
 // ============================================================
 
 const express = require('express');
@@ -154,7 +154,7 @@ router.get('/:id', auth, (req, res) => {
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.id = ? AND c.teacher_id = ?
-    ORDER BY cl.level ASC`; // Added sorting by level
+    ORDER BY cl.level ASC`;
 
   db.query(sql, [req.params.id, req.userId], (err, rows) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error' });
@@ -213,7 +213,7 @@ router.put('/:id', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  POST /api/courses/:id/levels - Add/Update Levels
+//  POST /api/courses/:id/levels - Add/Update Levels (FIXED)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:id/levels', auth, (req, res) => {
   uploadLevelFiles(req, res, async (uploadErr) => {
@@ -228,6 +228,7 @@ router.post('/:id/levels', auth, (req, res) => {
 
     if (!levels || !Array.isArray(levels)) return res.status(400).json({ success: false, message: 'Levels array is required' });
 
+    // 1. Verify ownership
     db.query('SELECT id FROM courses WHERE id = ? AND teacher_id = ?', [req.params.id, req.userId], async (err, rows) => {
       if (err || rows.length === 0) return res.status(404).json({ success: false, message: 'Course not found' });
 
@@ -236,38 +237,54 @@ router.post('/:id/levels', auth, (req, res) => {
       const pdfCoursePath = files.pdfCourseFile ? files.pdfCourseFile[0].path.replace(/\\/g, '/') : null;
       const pdfExercisePath = files.pdfExerciseFile ? files.pdfExerciseFile[0].path.replace(/\\/g, '/') : null;
 
-      for (const level of levels) {
-        const { level: levelName, videoUrl, textContent, quizNote } = level;
-        
-        // Handle file replacement logic
-        const oldFiles = await new Promise(resolve => {
-          db.query('SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ? AND level = ?', 
-          [req.params.id, levelName], (err, result) => resolve(result && result[0]));
-        });
+      try {
+        // 2. Process each level - Use a simpler approach: Update if exists, Insert if not
+        for (const level of levels) {
+          const { level: levelName, videoUrl, textContent, quizNote } = level;
+          
+          // Check if level exists
+          const existingLevel = await new Promise(resolve => {
+            db.query('SELECT id, video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ? AND level = ?', 
+            [req.params.id, levelName], (err, result) => resolve(result && result[0]));
+          });
 
-        if (oldFiles) {
-          if (videoPath && oldFiles.video_file_path) deleteOldFile(oldFiles.video_file_path);
-          if (pdfCoursePath && oldFiles.pdf_course) deleteOldFile(oldFiles.pdf_course);
-          if (pdfExercisePath && oldFiles.pdf_exercise) deleteOldFile(oldFiles.pdf_exercise);
+          if (existingLevel) {
+            // UPDATE existing level
+            if (videoPath && existingLevel.video_file_path) deleteOldFile(existingLevel.video_file_path);
+            if (pdfCoursePath && existingLevel.pdf_course) deleteOldFile(existingLevel.pdf_course);
+            if (pdfExercisePath && existingLevel.pdf_exercise) deleteOldFile(existingLevel.pdf_exercise);
+
+            const updateSql = `
+              UPDATE course_levels SET 
+                video_url = ?, 
+                video_file_path = COALESCE(?, video_file_path), 
+                text_content = ?, 
+                quiz_note = ?, 
+                pdf_course = COALESCE(?, pdf_course), 
+                pdf_exercise = COALESCE(?, pdf_exercise)
+              WHERE course_id = ? AND level = ?`;
+            
+            await new Promise((resolve, reject) => {
+              db.query(updateSql, [videoUrl || null, videoPath, textContent || null, quizNote || null, pdfCoursePath, pdfExercisePath, req.params.id, levelName], 
+              (err2) => err2 ? reject(err2) : resolve());
+            });
+          } else {
+            // INSERT new level
+            const insertSql = `
+              INSERT INTO course_levels (course_id, level, video_url, video_file_path, text_content, quiz_note, pdf_course, pdf_exercise)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+            
+            await new Promise((resolve, reject) => {
+              db.query(insertSql, [req.params.id, levelName, videoUrl || null, videoPath, textContent || null, quizNote || null, pdfCoursePath, pdfExercisePath], 
+              (err2) => err2 ? reject(err2) : resolve());
+            });
+          }
         }
-
-        const sql = `
-          INSERT INTO course_levels (course_id, level, video_url, video_file_path, text_content, quiz_note, pdf_course, pdf_exercise)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE
-            video_url = COALESCE(VALUES(video_url), video_url),
-            video_file_path = COALESCE(VALUES(video_file_path), video_file_path),
-            text_content = COALESCE(VALUES(text_content), text_content),
-            quiz_note = COALESCE(VALUES(quiz_note), quiz_note),
-            pdf_course = COALESCE(VALUES(pdf_course), pdf_course),
-            pdf_exercise = COALESCE(VALUES(pdf_exercise), pdf_exercise)`;
-
-        await new Promise((resolve, reject) => {
-          db.query(sql, [req.params.id, levelName, videoUrl || null, videoPath, textContent || null, quizNote || null, pdfCoursePath, pdfExercisePath], 
-          (err2) => err2 ? reject(err2) : resolve());
-        });
+        res.status(200).json({ success: true, message: 'Levels saved successfully' });
+      } catch (error) {
+        console.error('Error saving levels:', error);
+        res.status(500).json({ success: false, message: 'Error saving levels' });
       }
-      res.status(200).json({ success: true, message: 'Levels saved successfully' });
     });
   });
 });
@@ -297,3 +314,4 @@ router.delete('/:id', auth, (req, res) => {
 });
 
 module.exports = router;
+
