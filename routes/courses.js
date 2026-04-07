@@ -7,7 +7,7 @@
 //  ✅ Fixed: explicit GROUP BY for ONLY_FULL_GROUP_BY mode
 //  ✅ Fixed: null safety on all string fields in GET /:id
 // ============================================================
- 
+
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
@@ -15,23 +15,23 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  MULTER — File Upload Configuration
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 
+
 const UPLOAD_DIRS = [
   'uploads/courses/images',
   'uploads/courses/videos',
   'uploads/courses/pdfs',
 ];
- 
+
 UPLOAD_DIRS.forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 });
- 
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (file.fieldname === 'thumbnailFile') {
@@ -47,11 +47,11 @@ const storage = multer.diskStorage({
     cb(null, unique);
   },
 });
- 
+
 // ✅ Fixed: anchored regex prevents partial matches
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
- 
+
   if (file.fieldname === 'thumbnailFile') {
     if (/^\.(jpeg|jpg|png|webp)$/.test(ext)) {
       cb(null, true);
@@ -77,15 +77,15 @@ const fileFilter = (req, file, cb) => {
     cb(null, true);
   }
 };
- 
+
 const upload = multer({
   storage,
   fileFilter,
   limits: { fileSize: 200 * 1024 * 1024 },
 });
- 
+
 const uploadCourseImage = upload.single('thumbnailFile');
- 
+
 // ✅ Fixed: indexed field names so each level gets its OWN files
 // Flutter sends: videoFile_0, pdfCourseFile_0, pdfExerciseFile_0  (Beginner)
 //                videoFile_1, pdfCourseFile_1, pdfExerciseFile_1  (Intermediate)
@@ -101,7 +101,7 @@ const uploadLevelFiles = upload.fields([
   { name: 'pdfExerciseFile_1', maxCount: 1 },
   { name: 'pdfExerciseFile_2', maxCount: 1 },
 ]);
- 
+
 function deleteOldFile(filePath) {
   if (filePath && fs.existsSync(filePath)) {
     try {
@@ -112,7 +112,7 @@ function deleteOldFile(filePath) {
     }
   }
 }
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  JWT MIDDLEWARE — Teacher only
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -133,7 +133,7 @@ function auth(req, res, next) {
     next();
   });
 }
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -142,19 +142,19 @@ router.post('/', auth, (req, res) => {
     if (uploadErr) {
       return res.status(400).json({ success: false, message: uploadErr.message });
     }
- 
+
     const { title, description, courseType, chapter } = req.body;
- 
+
     if (!title || title.trim() === '') {
       return res.status(400).json({ success: false, message: 'Title is required' });
     }
- 
+
     const imagePath = req.file ? req.file.path.replace(/\\/g, '/') : null;
- 
+
     const sql = `
       INSERT INTO courses (teacher_id, title, description, course_type, chapter, image_path)
       VALUES (?, ?, ?, ?, ?, ?)`;
- 
+
     db.query(
       sql,
       [req.userId, title.trim(), description || null, courseType || null, chapter || null, imagePath],
@@ -176,7 +176,7 @@ router.post('/', auth, (req, res) => {
     );
   });
 });
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses
 //  ✅ Fixed: explicit GROUP BY for ONLY_FULL_GROUP_BY sql_mode
@@ -200,7 +200,7 @@ router.get('/', auth, (req, res) => {
       c.id, c.title, c.description, c.course_type,
       c.chapter, c.image_path, c.created_at, c.updated_at
     ORDER BY c.created_at DESC`;
- 
+
   db.query(sql, [req.userId], (err, rows) => {
     if (err) {
       console.error('=== DB ERROR GET /api/courses ===');
@@ -213,7 +213,7 @@ router.get('/', auth, (req, res) => {
     res.status(200).json({ success: true, courses: rows });
   });
 });
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/:id
 //  ✅ Fixed: all string fields default to '' instead of null
@@ -241,7 +241,7 @@ router.get('/:id', auth, (req, res) => {
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.id = ? AND c.teacher_id = ?`;
- 
+
   db.query(sql, [req.params.id, req.userId], (err, rows) => {
     if (err) {
       console.error('DB error fetching course detail:', err);
@@ -253,7 +253,7 @@ router.get('/:id', auth, (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
- 
+
     const course = {
       id:          rows[0].id,
       teacherId:   rows[0].teacherId,
@@ -277,11 +277,11 @@ router.get('/:id', auth, (req, res) => {
           pdfExercise:   r.pdfExercise     || '',
         })),
     };
- 
+
     res.status(200).json({ success: true, course });
   });
 });
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  PUT /api/courses/:id
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -290,7 +290,7 @@ router.put('/:id', auth, (req, res) => {
     if (uploadErr) {
       return res.status(400).json({ success: false, message: uploadErr.message });
     }
- 
+
     db.query(
       'SELECT id, image_path FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
@@ -304,17 +304,17 @@ router.put('/:id', auth, (req, res) => {
         if (rows.length === 0) {
           return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
         }
- 
+
         const { title, description, courseType, chapter } = req.body;
- 
+
         if (req.file && rows[0].image_path) {
           deleteOldFile(rows[0].image_path);
         }
- 
+
         const newImagePath = req.file
           ? req.file.path.replace(/\\/g, '/')
           : rows[0].image_path;
- 
+
         const sql = `
           UPDATE courses
           SET
@@ -324,7 +324,7 @@ router.put('/:id', auth, (req, res) => {
             chapter     = COALESCE(?, chapter),
             image_path  = ?
           WHERE id = ? AND teacher_id = ?`;
- 
+
         db.query(
           sql,
           [title || null, description || null, courseType || null,
@@ -347,7 +347,7 @@ router.put('/:id', auth, (req, res) => {
     );
   });
 });
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  DELETE /api/courses/:id
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -365,7 +365,7 @@ router.delete('/:id', auth, (req, res) => {
       if (rows.length === 0) {
         return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
       }
- 
+
       db.query(
         'SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ?',
         [req.params.id],
@@ -377,9 +377,9 @@ router.delete('/:id', auth, (req, res) => {
               deleteOldFile(row.pdf_exercise);
             });
           }
- 
+
           if (rows[0].image_path) deleteOldFile(rows[0].image_path);
- 
+
           db.query('DELETE FROM courses WHERE id = ?', [req.params.id], (err3) => {
             if (err3) {
               return res.status(500).json({
@@ -394,7 +394,7 @@ router.delete('/:id', auth, (req, res) => {
     }
   );
 });
- 
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses/:id/levels
 //
@@ -415,7 +415,7 @@ router.post('/:id/levels', auth, (req, res) => {
     if (uploadErr) {
       return res.status(400).json({ success: false, message: uploadErr.message });
     }
- 
+
     let levels;
     try {
       levels = typeof req.body.levels === 'string'
@@ -424,11 +424,11 @@ router.post('/:id/levels', auth, (req, res) => {
     } catch (e) {
       return res.status(400).json({ success: false, message: 'Invalid levels format' });
     }
- 
+
     if (!levels || !Array.isArray(levels) || levels.length === 0) {
       return res.status(400).json({ success: false, message: 'Levels array is required' });
     }
- 
+
     db.query(
       'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
@@ -442,22 +442,22 @@ router.post('/:id/levels', auth, (req, res) => {
         if (rows.length === 0) {
           return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
         }
- 
+
         const files = req.files || {};
- 
+
         try {
           for (let i = 0; i < levels.length; i++) {
             const { level: levelName, videoUrl, textContent, quizNote } = levels[i];
- 
+
             // ✅ Each level gets its own file by index
             const videoFile    = files[`videoFile_${i}`]?.[0];
             const pdfCourse    = files[`pdfCourseFile_${i}`]?.[0];
             const pdfExercise  = files[`pdfExerciseFile_${i}`]?.[0];
- 
+
             const videoPath       = videoFile   ? videoFile.path.replace(/\\/g, '/')   : null;
             const pdfCoursePath   = pdfCourse   ? pdfCourse.path.replace(/\\/g, '/')   : null;
             const pdfExercisePath = pdfExercise ? pdfExercise.path.replace(/\\/g, '/') : null;
- 
+
             // Delete replaced files only
             if (videoPath || pdfCoursePath || pdfExercisePath) {
               const oldFiles = await new Promise((resolve) => {
@@ -470,14 +470,14 @@ router.post('/:id/levels', auth, (req, res) => {
                   }
                 );
               });
- 
+
               if (oldFiles) {
                 if (videoPath && oldFiles.video_file_path)    deleteOldFile(oldFiles.video_file_path);
                 if (pdfCoursePath && oldFiles.pdf_course)     deleteOldFile(oldFiles.pdf_course);
                 if (pdfExercisePath && oldFiles.pdf_exercise) deleteOldFile(oldFiles.pdf_exercise);
               }
             }
- 
+
             // ✅ Fixed: row alias syntax for MySQL 8.0.20+
             const sql = `
               INSERT INTO course_levels
@@ -491,7 +491,7 @@ router.post('/:id/levels', auth, (req, res) => {
                 quiz_note       = COALESCE(new_row.quiz_note,       quiz_note),
                 pdf_course      = COALESCE(new_row.pdf_course,      pdf_course),
                 pdf_exercise    = COALESCE(new_row.pdf_exercise,    pdf_exercise)`;
- 
+
             await new Promise((resolve, reject) => {
               db.query(
                 sql,
@@ -515,9 +515,9 @@ router.post('/:id/levels', auth, (req, res) => {
               );
             });
           }
- 
+
           res.status(200).json({ success: true, message: 'Levels saved successfully' });
- 
+
         } catch (loopErr) {
           console.error('Error in levels loop:', loopErr);
           res.status(500).json({
@@ -529,5 +529,5 @@ router.post('/:id/levels', auth, (req, res) => {
     );
   });
 });
- 
+
 module.exports = router;
