@@ -1,164 +1,117 @@
 // ============================================================
-//  course.js  –  Verto LMS Backend (Fixed Version)
-//  ✅ FIXED: Each level receives its own files (videoFile_Beginner, etc.)
-//  ✅ FIXED: ON DUPLICATE KEY UPDATE no longer uses COALESCE on text fields
-//  ✅ FIXED: Old files cleaned up correctly per level
-//  ✅ Compatible with Flutter frontend fix (field names with level suffix)
+//  routes/courses.js  –  Verto LMS Backend  (FINAL MERGED VERSION)
+//
+//  Sources merged:
+//    • File 1 — Cloudinary storage, snake_case fields, quiz_questions table
+//    • File 2 — per-level file fields fix, COALESCE fix on text fields
+//
+//  ✅ Cloudinary storage — files permanent across redeploys
+//  ✅ Field names: snake_case throughout (video_file_Beginner, etc.)
+//  ✅ quiz_note column kept in course_levels (Flutter uses it for raw JSON)
+//  ✅ quiz_questions table used for structured quiz data (GET /:id returns both)
+//  ✅ Per-level file fields: video_file_Beginner / pdf_course_Beginner / pdf_exercise_Beginner
+//  ✅ ON DUPLICATE KEY UPDATE — text fields always overwrite, file paths use COALESCE
+//  ✅ Batch INSERT with VALUES ? (single query for all 3 levels)
+//  ✅ DELETE relies on DB CASCADE (no manual file deletion needed with Cloudinary)
+//  ✅ Level name validation on POST /:id/levels
 // ============================================================
 
-const express = require('express');
-const router = express.Router();
-const db = require('../db');
-const jwt = require('jsonwebtoken');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const express         = require('express');
+const router          = express.Router();
+const db              = require('../db');
+const jwt             = require('jsonwebtoken');
+const multer          = require('multer');
+const { storage }     = require('../config/cloudinary');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  MULTER — File Upload Configuration
+//  CONSTANTS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
+const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
-const UPLOAD_DIRS = [
-  'uploads/courses/images',
-  'uploads/courses/videos',
-  'uploads/courses/pdfs',
-];
-
-UPLOAD_DIRS.forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (file.fieldname === 'thumbnailFile') {
-      cb(null, 'uploads/courses/images');
-    } else if (file.fieldname.startsWith('videoFile_')) {
-      cb(null, 'uploads/courses/videos');
-    } else if (
-      file.fieldname.startsWith('pdfCourseFile_') ||
-      file.fieldname.startsWith('pdfExerciseFile_')
-    ) {
-      cb(null, 'uploads/courses/pdfs');
-    } else {
-      cb(null, 'uploads/courses/pdfs');
-    }
-  },
-  filename: (req, file, cb) => {
-    const unique = `${Date.now()}_${file.originalname.replace(/\s/g, '_')}`;
-    cb(null, unique);
-  },
-});
-
-const fileFilter = (req, file, cb) => {
-  const ext = path.extname(file.originalname).toLowerCase();
-
-  if (file.fieldname === 'thumbnailFile') {
-    if (/\.(jpeg|jpg|png|webp)$/.test(ext)) cb(null, true);
-    else cb(new Error('Only image files (JPEG, PNG, WEBP) are allowed for thumbnail'));
-
-  } else if (file.fieldname.startsWith('videoFile_')) {
-    if (/\.(mp4|mov|avi|mkv|webm)$/.test(ext)) cb(null, true);
-    else cb(new Error('Only video files (MP4, MOV, AVI, MKV, WEBM) are allowed'));
-
-  } else if (
-    file.fieldname.startsWith('pdfCourseFile_') ||
-    file.fieldname.startsWith('pdfExerciseFile_')
-  ) {
-    if (ext === '.pdf') cb(null, true);
-    else cb(new Error('Only PDF files are allowed'));
-
-  } else {
-    cb(null, true);
-  }
-};
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  MULTER — Cloudinary storage
+//
+//  Thumbnail  : field name 'image'
+//  Level files: video_file_{Level}, pdf_course_{Level}, pdf_exercise_{Level}
+//               e.g. video_file_Beginner, pdf_course_Advanced
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const upload = multer({
   storage,
-  fileFilter,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
 });
 
-const uploadCourseImage = upload.single('thumbnailFile');
+const uploadCourseImage = upload.single('image');
 
-// ✅ FIX: Each level has its own file fields — videoFile_Beginner, etc.
+// Build per-level field list (3 levels × 3 file types = 9 fields)
 const levelFileFields = [];
-for (const level of LEVELS) {
-  levelFileFields.push({ name: `videoFile_${level}`,       maxCount: 1 });
-  levelFileFields.push({ name: `pdfCourseFile_${level}`,   maxCount: 1 });
-  levelFileFields.push({ name: `pdfExerciseFile_${level}`, maxCount: 1 });
+for (const lvl of VALID_LEVELS) {
+  levelFileFields.push({ name: `video_file_${lvl}`,    maxCount: 1 });
+  levelFileFields.push({ name: `pdf_course_${lvl}`,    maxCount: 1 });
+  levelFileFields.push({ name: `pdf_exercise_${lvl}`,  maxCount: 1 });
 }
 const uploadLevelFiles = upload.fields(levelFileFields);
 
-function deleteOldFile(filePath) {
-  if (filePath && fs.existsSync(filePath)) {
-    try {
-      fs.unlinkSync(filePath);
-      console.log(`Deleted old file: ${filePath}`);
-    } catch (err) {
-      console.error('Error deleting file:', err);
-    }
-  }
+// Helper: safely extract a Cloudinary URL from multer's files object
+function fileUrl(files, fieldname) {
+  if (!files || !files[fieldname] || !files[fieldname][0]) return null;
+  return files[fieldname][0].path; // Cloudinary returns full URL in .path
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  JWT MIDDLEWARE — Teacher only
+//  JWT MIDDLEWARE — teacher only
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 function auth(req, res, next) {
   const header = req.headers['authorization'];
-  if (!header) {
+  if (!header)
     return res.status(401).json({ success: false, message: 'No token provided' });
-  }
 
   const token = header.split(' ')[1];
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
+    if (err)
       return res.status(403).json({ success: false, message: 'Invalid or expired token' });
-    }
-    if (decoded.role !== 'teacher') {
+    if (decoded.role !== 'teacher')
       return res.status(403).json({ success: false, message: 'Teachers only' });
-    }
     req.userId = decoded.id;
     next();
   });
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  POST /api/courses  —  Create course
+//  POST /api/courses  —  Create a new course
+//  Body : title, description, course_type, chapter
+//  File : image  (thumbnail, optional)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.post('/', auth, (req, res) => {
   uploadCourseImage(req, res, (uploadErr) => {
-    if (uploadErr) {
+    if (uploadErr)
       return res.status(400).json({ success: false, message: uploadErr.message });
-    }
 
-    const { title, description, courseType, chapter } = req.body;
+    const { title, description, course_type, chapter } = req.body;
 
-    if (!title || title.trim() === '') {
+    if (!title || title.trim() === '')
       return res.status(400).json({ success: false, message: 'Title is required' });
-    }
 
-    const imagePath = req.file ? req.file.path.replace(/\\/g, '/') : null;
-
-    const sql = `
-      INSERT INTO courses (teacher_id, title, description, course_type, chapter, image_path)
-      VALUES (?, ?, ?, ?, ?, ?)`;
+    const imagePath = req.file ? req.file.path : null;
 
     db.query(
-      sql,
-      [req.userId, title.trim(), description || null, courseType || null, chapter || null, imagePath],
+      `INSERT INTO courses
+         (teacher_id, title, description, course_type, chapter, image_path)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [req.userId, title.trim(), description || null,
+       course_type || null, chapter || null, imagePath],
       (err, result) => {
         if (err) {
           console.error('DB error creating course:', err);
           return res.status(500).json({ success: false, message: 'Database error' });
         }
         res.status(201).json({
-          success: true,
-          message: 'Course created',
-          courseId: result.insertId,
+          success:   true,
+          message:   'Course created',
+          courseId:  result.insertId,
           imagePath,
         });
       }
@@ -167,20 +120,21 @@ router.post('/', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/courses  —  All courses for the teacher
+//  GET /api/courses  —  All courses for the authenticated teacher
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.get('/', auth, (req, res) => {
   const sql = `
     SELECT
       c.id,
       c.title,
       c.description,
-      c.course_type  AS courseType,
+      c.course_type,
       c.chapter,
-      c.image_path   AS imagePath,
-      c.created_at   AS createdAt,
-      c.updated_at   AS updatedAt,
-      COUNT(cl.id)   AS levelsCount
+      c.image_path,
+      c.created_at,
+      c.updated_at,
+      COUNT(DISTINCT cl.id) AS levels_count
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.teacher_id = ?
@@ -197,111 +151,144 @@ router.get('/', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/courses/:id  —  One course with all its levels
+//  GET /api/courses/:id  —  One course with levels + quiz questions
+//
+//  Returns each level with:
+//    • quiz_note      : raw JSON string stored in course_levels (legacy/Flutter)
+//    • quizQuestions  : structured rows from quiz_questions table
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.get('/:id', auth, (req, res) => {
-  const sql = `
+  const courseSql = `
     SELECT
       c.id,
-      c.teacher_id   AS teacherId,
+      c.teacher_id,
       c.title,
       c.description,
-      c.course_type  AS courseType,
+      c.course_type,
       c.chapter,
-      c.image_path   AS imagePath,
-      c.created_at   AS createdAt,
-      c.updated_at   AS updatedAt,
-      cl.id          AS levelId,
+      c.image_path,
+      c.created_at,
+      c.updated_at,
+      cl.id               AS level_id,
       cl.level,
-      cl.video_url        AS videoUrl,
-      cl.video_file_path  AS videoFilePath,
-      cl.text_content     AS textContent,
-      cl.quiz_note        AS quizNote,
-      cl.pdf_course       AS pdfCourse,
-      cl.pdf_exercise     AS pdfExercise
+      cl.video_url,
+      cl.video_file_path,
+      cl.text_content,
+      cl.quiz_note,
+      cl.pdf_course,
+      cl.pdf_exercise
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.id = ? AND c.teacher_id = ?`;
 
-  db.query(sql, [req.params.id, req.userId], (err, rows) => {
+  db.query(courseSql, [req.params.id, req.userId], (err, courseRows) => {
     if (err) {
       console.error('DB error fetching course:', err);
       return res.status(500).json({ success: false, message: 'Database error' });
     }
-    if (rows.length === 0) {
+    if (!courseRows.length)
       return res.status(404).json({ success: false, message: 'Course not found' });
-    }
 
-    const course = {
-      id:          rows[0].id,
-      teacherId:   rows[0].teacherId,
-      title:       rows[0].title,
-      description: rows[0].description,
-      courseType:  rows[0].courseType,
-      chapter:     rows[0].chapter,
-      imagePath:   rows[0].imagePath,
-      createdAt:   rows[0].createdAt,
-      updatedAt:   rows[0].updatedAt,
-      levels: rows
-        .filter(r => r.levelId !== null)
-        .map(r => ({
-          id:            r.levelId,
-          level:         r.level,
-          videoUrl:      r.videoUrl      ?? '',
-          videoFilePath: r.videoFilePath ?? '',
-          textContent:   r.textContent   ?? '',
-          quizNote:      r.quizNote      ?? '',
-          pdfCourse:     r.pdfCourse     ?? '',
-          pdfExercise:   r.pdfExercise   ?? '',
-        })),
-    };
+    // Fetch structured quiz questions from dedicated table
+    const quizSql = `
+      SELECT
+        qq.id,
+        qq.course_level_id,
+        qq.question_text,
+        qq.options,
+        qq.correct_answer_index
+      FROM quiz_questions qq
+      INNER JOIN course_levels cl ON cl.id = qq.course_level_id
+      WHERE cl.course_id = ?
+      ORDER BY cl.level, qq.id`;
 
-    res.status(200).json({ success: true, course });
+    db.query(quizSql, [req.params.id], (err2, quizRows) => {
+      if (err2) {
+        console.error('DB error fetching quiz questions:', err2);
+        return res.status(500).json({ success: false, message: 'Database error' });
+      }
+
+      const course = {
+        id:          courseRows[0].id,
+        teacher_id:  courseRows[0].teacher_id,
+        title:       courseRows[0].title,
+        description: courseRows[0].description,
+        course_type: courseRows[0].course_type,
+        chapter:     courseRows[0].chapter,
+        image_path:  courseRows[0].image_path,
+        created_at:  courseRows[0].created_at,
+        updated_at:  courseRows[0].updated_at,
+        levels: courseRows
+          .filter(r => r.level_id !== null)
+          .map(r => ({
+            id:              r.level_id,
+            level:           r.level,
+            video_url:       r.video_url       ?? '',
+            video_file_path: r.video_file_path ?? '',
+            text_content:    r.text_content    ?? '',
+            quiz_note:       r.quiz_note       ?? '',   // raw JSON for Flutter
+            pdf_course:      r.pdf_course      ?? '',
+            pdf_exercise:    r.pdf_exercise    ?? '',
+            // Structured quiz rows from quiz_questions table
+            quizQuestions: quizRows
+              .filter(q => q.course_level_id === r.level_id)
+              .map(q => ({
+                id:                 q.id,
+                questionText:       q.question_text,
+                options: (() => {
+                  try {
+                    return typeof q.options === 'string'
+                      ? JSON.parse(q.options)
+                      : q.options;
+                  } catch (_) { return []; }
+                })(),
+                correctAnswerIndex: q.correct_answer_index,
+              })),
+          })),
+      };
+
+      res.status(200).json({ success: true, course });
+    });
   });
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  PUT /api/courses/:id  —  Update basic info + thumbnail
+//  PUT /api/courses/:id  —  Update basic info and/or thumbnail
+//  Body : title, description, course_type, chapter (all optional)
+//  File : image  (optional — keeps existing if omitted)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.put('/:id', auth, (req, res) => {
   uploadCourseImage(req, res, (uploadErr) => {
-    if (uploadErr) {
+    if (uploadErr)
       return res.status(400).json({ success: false, message: uploadErr.message });
-    }
 
     db.query(
       'SELECT id, image_path FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
       (err, rows) => {
-        if (err) {
+        if (err)
           return res.status(500).json({ success: false, message: 'Database error' });
-        }
-        if (rows.length === 0) {
-          return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
-        }
+        if (!rows.length)
+          return res.status(404).json({
+            success: false, message: 'Course not found or unauthorized',
+          });
 
-        const { title, description, courseType, chapter } = req.body;
+        const { title, description, course_type, chapter } = req.body;
 
-        if (req.file && rows[0].image_path) {
-          deleteOldFile(rows[0].image_path);
-        }
-
-        const newImagePath = req.file
-          ? req.file.path.replace(/\\/g, '/')
-          : rows[0].image_path;
-
-        const sql = `
-          UPDATE courses
-          SET title       = COALESCE(?, title),
-              description = COALESCE(?, description),
-              course_type = COALESCE(?, course_type),
-              chapter     = COALESCE(?, chapter),
-              image_path  = ?
-          WHERE id = ? AND teacher_id = ?`;
+        // Cloudinary: new upload returns its own URL; keep old URL if no new file
+        const newImagePath = req.file ? req.file.path : rows[0].image_path;
 
         db.query(
-          sql,
-          [title || null, description || null, courseType || null,
+          `UPDATE courses
+           SET title       = COALESCE(?, title),
+               description = COALESCE(?, description),
+               course_type = COALESCE(?, course_type),
+               chapter     = COALESCE(?, chapter),
+               image_path  = ?
+           WHERE id = ? AND teacher_id = ?`,
+          [title || null, description || null, course_type || null,
            chapter || null, newImagePath, req.params.id, req.userId],
           (err2) => {
             if (err2) {
@@ -309,8 +296,8 @@ router.put('/:id', auth, (req, res) => {
               return res.status(500).json({ success: false, message: 'Database error' });
             }
             res.status(200).json({
-              success: true,
-              message: 'Course updated',
+              success:   true,
+              message:   'Course updated',
               imagePath: newImagePath,
             });
           }
@@ -322,40 +309,29 @@ router.put('/:id', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  DELETE /api/courses/:id
+//  Cloudinary files are managed by Cloudinary — no local unlink needed.
+//  DB CASCADE deletes course_levels and quiz_questions automatically.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.delete('/:id', auth, (req, res) => {
   db.query(
-    'SELECT image_path FROM courses WHERE id = ? AND teacher_id = ?',
+    'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
     [req.params.id, req.userId],
     (err, rows) => {
-      if (err) return res.status(500).json({ success: false, message: 'Database error' });
-      if (rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
-      }
+      if (err)
+        return res.status(500).json({ success: false, message: 'Database error' });
+      if (!rows.length)
+        return res.status(404).json({
+          success: false, message: 'Course not found or unauthorized',
+        });
 
-      db.query(
-        'SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ?',
-        [req.params.id],
-        (err2, levelRows) => {
-          if (!err2 && levelRows) {
-            levelRows.forEach(row => {
-              deleteOldFile(row.video_file_path);
-              deleteOldFile(row.pdf_course);
-              deleteOldFile(row.pdf_exercise);
-            });
-          }
-
-          if (rows[0].image_path) deleteOldFile(rows[0].image_path);
-
-          db.query('DELETE FROM courses WHERE id = ?', [req.params.id], (err3) => {
-            if (err3) {
-              console.error('DB error deleting course:', err3);
-              return res.status(500).json({ success: false, message: 'Database error' });
-            }
-            res.status(200).json({ success: true, message: 'Course deleted' });
-          });
+      db.query('DELETE FROM courses WHERE id = ?', [req.params.id], (err2) => {
+        if (err2) {
+          console.error('DB error deleting course:', err2);
+          return res.status(500).json({ success: false, message: 'Database error' });
         }
-      );
+        res.status(200).json({ success: true, message: 'Course deleted' });
+      });
     }
   );
 });
@@ -363,115 +339,201 @@ router.delete('/:id', auth, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses/:id/levels
 //
-//  ✅ FIX 1: Each level uploads its own files with a level suffix:
-//            videoFile_Beginner, pdfCourseFile_Intermediate, etc.
+//  Saves content for all 3 adaptive levels in a single request.
 //
-//  ✅ FIX 2: ON DUPLICATE KEY UPDATE no longer uses COALESCE on text
-//            fields — the new value always wins. COALESCE is kept only
-//            for file paths so existing files are not lost when no new
-//            file is uploaded for that level.
+//  Body (multipart/form-data):
+//    levels              : JSON string — array of level objects (see below)
+//    video_file_Beginner : file (optional)
+//    pdf_course_Beginner : file (optional)
+//    pdf_exercise_Beginner: file (optional)
+//    ... same pattern for Intermediate and Advanced
+//
+//  Level object shape:
+//    {
+//      level            : 'Beginner' | 'Intermediate' | 'Advanced'
+//      video_url        : string   (optional)
+//      text_content     : string   (optional)
+//      quiz_note        : string   (optional — raw JSON, used by Flutter)
+//      quiz_questions   : array    (optional — structured quiz, saved to quiz_questions table)
+//    }
+//
+//  ✅ Text fields always overwrite (no COALESCE) — clears work correctly
+//  ✅ File paths keep COALESCE — existing uploads preserved when no new file sent
+//  ✅ quiz_questions: DELETE existing + re-INSERT on each save (idempotent)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.post('/:id/levels', auth, (req, res) => {
-  uploadLevelFiles(req, res, async (uploadErr) => {
-    if (uploadErr) {
-      return res.status(400).json({ success: false, message: uploadErr.message });
-    }
 
-    // Parse levels array from body
+router.post('/:id/levels', auth, (req, res) => {
+  uploadLevelFiles(req, res, (uploadErr) => {
+    if (uploadErr)
+      return res.status(400).json({ success: false, message: uploadErr.message });
+
+    // ── Parse levels payload ──────────────────────────────
     let levels;
     try {
       levels = typeof req.body.levels === 'string'
         ? JSON.parse(req.body.levels)
         : req.body.levels;
-    } catch (e) {
-      return res.status(400).json({ success: false, message: 'Invalid levels format' });
+    } catch (_) {
+      return res.status(400).json({
+        success: false, message: 'levels must be a valid JSON array',
+      });
     }
 
-    if (!levels || !Array.isArray(levels) || levels.length === 0) {
-      return res.status(400).json({ success: false, message: 'Levels array is required' });
-    }
+    if (!levels || !Array.isArray(levels) || !levels.length)
+      return res.status(400).json({ success: false, message: 'levels array is required' });
 
-    // Verify course ownership
-    const ownerCheck = await new Promise((resolve) => {
-      db.query(
-        'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
-        [req.params.id, req.userId],
-        (err, rows) => resolve(err ? null : rows)
-      );
-    });
+    // ── Validate level names ──────────────────────────────
+    const invalidLevel = levels.find(l => !VALID_LEVELS.includes(l.level));
+    if (invalidLevel)
+      return res.status(400).json({
+        success: false,
+        message: `level must be one of: ${VALID_LEVELS.join(', ')}`,
+      });
 
-    if (!ownerCheck || ownerCheck.length === 0) {
-      return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
-    }
-
-    const files = req.files || {};
-
-    try {
-      for (const level of levels) {
-        const { level: levelName, videoUrl, textContent, quizNote } = level;
-
-        // ✅ FIX 1: Each level reads its OWN files by using the level name as suffix
-        const videoPath      = files[`videoFile_${levelName}`]?.[0]?.path.replace(/\\/g, '/') ?? null;
-        const pdfCoursePath  = files[`pdfCourseFile_${levelName}`]?.[0]?.path.replace(/\\/g, '/') ?? null;
-        const pdfExercisePath = files[`pdfExerciseFile_${levelName}`]?.[0]?.path.replace(/\\/g, '/') ?? null;
-
-        // Clean up old files only when a new file is provided for this level
-        if (videoPath || pdfCoursePath || pdfExercisePath) {
-          const oldFiles = await new Promise((resolve) => {
-            db.query(
-              'SELECT video_file_path, pdf_course, pdf_exercise FROM course_levels WHERE course_id = ? AND level = ?',
-              [req.params.id, levelName],
-              (err, result) => resolve(err || !result?.length ? null : result[0])
-            );
+    // ── Verify course ownership ───────────────────────────
+    db.query(
+      'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
+      [req.params.id, req.userId],
+      (err, rows) => {
+        if (err)
+          return res.status(500).json({ success: false, message: 'Database error' });
+        if (!rows.length)
+          return res.status(404).json({
+            success: false, message: 'Course not found or unauthorized',
           });
 
-          if (oldFiles) {
-            if (videoPath      && oldFiles.video_file_path) deleteOldFile(oldFiles.video_file_path);
-            if (pdfCoursePath  && oldFiles.pdf_course)      deleteOldFile(oldFiles.pdf_course);
-            if (pdfExercisePath && oldFiles.pdf_exercise)   deleteOldFile(oldFiles.pdf_exercise);
-          }
-        }
+        const files = req.files || {};
 
-        // ✅ FIX 2: Text fields (video_url, text_content, quiz_note) always
-        //    overwrite — no COALESCE — so clearing a field actually clears it
-        //    in the DB.  File paths keep COALESCE so an existing upload is
-        //    preserved when no new file is sent for that level.
-        const sql = `
-          INSERT INTO course_levels
-            (course_id, level, video_url, video_file_path, text_content, quiz_note, pdf_course, pdf_exercise)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE
-            video_url       = VALUES(video_url),
-            text_content    = VALUES(text_content),
-            quiz_note       = VALUES(quiz_note),
-            video_file_path = COALESCE(VALUES(video_file_path), video_file_path),
-            pdf_course      = COALESCE(VALUES(pdf_course),      pdf_course),
-            pdf_exercise    = COALESCE(VALUES(pdf_exercise),    pdf_exercise)`;
-
-        await new Promise((resolve, reject) => {
-          db.query(
-            sql,
-            [
-              req.params.id,
-              levelName,
-              videoUrl      || null,
-              videoPath,
-              textContent   || null,
-              quizNote      || null,
-              pdfCoursePath,
-              pdfExercisePath,
-            ],
-            (err2) => { if (err2) reject(err2); else resolve(); }
-          );
+        // ── Build batch INSERT rows ───────────────────────
+        // Each level picks its own files by the level-suffix field name.
+        // quiz_note carries the raw JSON string Flutter sends.
+        const levelRows = levels.map(l => {
+          const lvl = l.level;
+          return [
+            req.params.id,
+            lvl,
+            l.video_url     || null,
+            fileUrl(files, `video_file_${lvl}`),
+            l.text_content  || null,
+            l.quiz_note     || null,
+            fileUrl(files, `pdf_course_${lvl}`),
+            fileUrl(files, `pdf_exercise_${lvl}`),
+          ];
         });
+
+        // ── Upsert course_levels (batch, single query) ────
+        // Text fields (video_url, text_content, quiz_note) always overwrite.
+        // File paths keep COALESCE so an existing Cloudinary URL is not lost
+        // when no new file is uploaded for that level.
+        db.query(
+          `INSERT INTO course_levels
+             (course_id, level, video_url, video_file_path,
+              text_content, quiz_note, pdf_course, pdf_exercise)
+           VALUES ?
+           ON DUPLICATE KEY UPDATE
+             video_url       = VALUES(video_url),
+             text_content    = VALUES(text_content),
+             quiz_note       = VALUES(quiz_note),
+             video_file_path = COALESCE(VALUES(video_file_path), video_file_path),
+             pdf_course      = COALESCE(VALUES(pdf_course),      pdf_course),
+             pdf_exercise    = COALESCE(VALUES(pdf_exercise),    pdf_exercise)`,
+          [levelRows],
+          (err2) => {
+            if (err2) {
+              console.error('DB error saving levels:', err2);
+              return res.status(500).json({ success: false, message: 'Error saving levels' });
+            }
+
+            // ── Fetch level IDs to link quiz_questions rows ──
+            db.query(
+              'SELECT id, level FROM course_levels WHERE course_id = ? AND level IN (?)',
+              [req.params.id, levels.map(l => l.level)],
+              (err3, levelIds) => {
+                if (err3)
+                  return res.status(500).json({
+                    success: false, message: 'Error fetching level IDs',
+                  });
+
+                // level name → DB id map
+                const levelMap = {};
+                levelIds.forEach(r => { levelMap[r.level] = r.id; });
+
+                // ── Build quiz_questions INSERT rows ─────────
+                const quizInserts = [];
+                levels.forEach(level => {
+                  const courseLevelId = levelMap[level.level];
+                  if (!courseLevelId) return;
+                  if (!Array.isArray(level.quiz_questions) || !level.quiz_questions.length) return;
+
+                  level.quiz_questions.forEach(q => {
+                    quizInserts.push([
+                      courseLevelId,
+                      q.questionText,
+                      JSON.stringify(q.options),
+                      q.correctAnswerIndex,
+                    ]);
+                  });
+                });
+
+                // Collect uploaded Cloudinary URLs to return to the client
+                const uploadedFiles = levels.reduce((acc, l) => {
+                  const lvl = l.level;
+                  acc[lvl] = {
+                    video_file_path: fileUrl(files, `video_file_${lvl}`),
+                    pdf_course:      fileUrl(files, `pdf_course_${lvl}`),
+                    pdf_exercise:    fileUrl(files, `pdf_exercise_${lvl}`),
+                  };
+                  return acc;
+                }, {});
+
+                // No structured quiz questions → return immediately
+                if (!quizInserts.length) {
+                  return res.status(200).json({
+                    success:       true,
+                    message:       'Levels saved successfully',
+                    uploadedFiles,
+                  });
+                }
+
+                // ── Replace quiz questions (DELETE + re-INSERT) ──
+                // Deleting all rows for the affected levels then re-inserting
+                // is the cleanest way to handle edit-mode saves.
+                db.query(
+                  'DELETE FROM quiz_questions WHERE course_level_id IN (?)',
+                  [Object.values(levelMap)],
+                  (err4) => {
+                    if (err4)
+                      return res.status(500).json({
+                        success: false, message: 'Error updating quiz questions',
+                      });
+
+                    db.query(
+                      `INSERT INTO quiz_questions
+                         (course_level_id, question_text, options, correct_answer_index)
+                       VALUES ?`,
+                      [quizInserts],
+                      (err5) => {
+                        if (err5)
+                          return res.status(500).json({
+                            success: false, message: 'Error saving quiz questions',
+                          });
+
+                        res.status(200).json({
+                          success:            true,
+                          message:            'Levels and quiz questions saved successfully',
+                          uploadedFiles,
+                          quizQuestionsCount: quizInserts.length,
+                        });
+                      }
+                    );
+                  }
+                );
+              }
+            );
+          }
+        );
       }
-
-      res.status(200).json({ success: true, message: 'Levels saved successfully' });
-
-    } catch (dbErr) {
-      console.error('DB error saving levels:', dbErr);
-      res.status(500).json({ success: false, message: 'Database error while saving levels' });
-    }
+    );
   });
 });
 
