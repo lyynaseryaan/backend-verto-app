@@ -271,5 +271,69 @@ router.get('/:id', auth, (req, res) => {
     });
   });
 });
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/student/courses/:id/enrollment
+//  Returns whether the current student is enrolled in a course.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/:id/enrollment', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) {
+    return res.status(400).json({ success: false, message: 'Invalid course id' });
+  }
 
+  db.query(
+    'SELECT id FROM enrollments WHERE student_id = ? AND course_id = ?',
+    [req.userId, courseId],
+    (err, rows) => {
+      if (err) {
+        console.error('[enrollment] check error:', err);
+        return res.status(500).json({ success: false, message: 'Database error' });
+      }
+      return res.status(200).json({
+        success:    true,
+        isEnrolled: rows.length > 0,
+      });
+    }
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POST /api/student/courses/:id/enroll
+//  Enrolls the current student in a course.
+//  Safe to call multiple times (INSERT IGNORE).
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.post('/:id/enroll', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) {
+    return res.status(400).json({ success: false, message: 'Invalid course id' });
+  }
+
+  // Verify the course exists
+  db.query('SELECT id FROM courses WHERE id = ?', [courseId], (err, rows) => {
+    if (err) {
+      console.error('[enrollment] course lookup error:', err);
+      return res.status(500).json({ success: false, message: 'Database error' });
+    }
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    // INSERT IGNORE — safe if already enrolled (won't duplicate due to UNIQUE KEY)
+    db.query(
+      'INSERT IGNORE INTO enrollments (student_id, course_id) VALUES (?, ?)',
+      [req.userId, courseId],
+      (err2) => {
+        if (err2) {
+          console.error('[enrollment] insert error:', err2);
+          return res.status(500).json({ success: false, message: 'Database error' });
+        }
+        return res.status(200).json({
+          success:    true,
+          isEnrolled: true,
+          message:    'Enrolled successfully',
+        });
+      }
+    );
+  });
+});
 module.exports = router;
