@@ -153,10 +153,11 @@ router.post('/update-language', (req, res) => {
 
         db.query(sql, [language, userId], (err, result) => {
             if (err) {
+                console.error("Login DB error:", err);
                 return res.status(500).json({
                     success: false,
-                    error: "Database error"
-                });
+                    message: "Database error"
+            });
             }return res.status(200).json({
                 success: true,
                 message: "Language updated successfully"
