@@ -1,16 +1,13 @@
-// ============================================================
-//  routes/studentQuiz.js  –  Verto LMS
-//  ✅ GET  /api/student/quiz/:courseId?level=Beginner  → questions (NO correct answers)
-//  ✅ POST /api/student/quiz/:courseId/submit          → evaluate & return score
-// ============================================================
+// routes/studentQuiz.js
+// ✅ GET  /api/student/quiz/:courseId?level=Beginner  → questions (NO correct answers)
+// ✅ POST /api/student/quiz/:courseId/submit          → evaluate & return score
+
 const express = require('express');
 const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  AUTH MIDDLEWARE  (students + teachers both welcome)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Auth Middleware ━━━
 function auth(req, res, next) {
   const header = req.headers['authorization'];
   if (!header)
@@ -30,7 +27,7 @@ const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/quiz/:courseId?level=Beginner
-//  Returns questions + options.  ❌ NO correct_answer_index sent.
+//  Returns questions + options. ❌ NO correct_answer_index sent.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:courseId', auth, (req, res) => {
   const courseId = parseInt(req.params.courseId);
@@ -57,6 +54,7 @@ router.get('/:courseId', auth, (req, res) => {
       console.error('[studentQuiz] fetch error:', err);
       return res.status(500).json({ success: false, message: 'Database error' });
     }
+
     if (!rows.length)
       return res.status(200).json({ success: true, questions: [] });
 
@@ -69,7 +67,7 @@ router.get('/:courseId', auth, (req, res) => {
         id:       row.id,
         question: row.question_text,
         options,
-        // ✅ correct_answer_index is intentionally omitted
+        // ✅ correct_answer_index intentionally omitted
       };
     });
 
@@ -79,7 +77,7 @@ router.get('/:courseId', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/student/quiz/:courseId/submit
-//  Body: { level: 'Beginner', answers: [ { questionId: 1, selectedIndex: 2 }, ... ] }
+//  Body: { level: 'Beginner', answers: [{ questionId, selectedIndex }] }
 //  ✅ Evaluation done server-side only
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:courseId/submit', auth, (req, res) => {
@@ -96,9 +94,10 @@ router.post('/:courseId/submit', auth, (req, res) => {
     });
 
   if (!Array.isArray(answers) || !answers.length)
-    return res.status(400).json({ success: false, message: '"answers" array is required' });
+    return res.status(400).json({
+      success: false, message: '"answers" array is required',
+    });
 
-  // Fetch correct answers for these question IDs
   const questionIds = answers.map(a => parseInt(a.questionId)).filter(Boolean);
 
   const sql = `
@@ -109,13 +108,15 @@ router.post('/:courseId/submit', auth, (req, res) => {
 
   db.query(sql, [courseId, level, questionIds], (err, rows) => {
     if (err) {
-      console.error('[studentQuiz] submit fetch error:', err);
+      console.error('[studentQuiz] submit error:', err);
       return res.status(500).json({ success: false, message: 'Database error' });
     }
     if (!rows.length)
-      return res.status(404).json({ success: false, message: 'No quiz questions found' });
+      return res.status(404).json({
+        success: false, message: 'No quiz questions found',
+      });
 
-    // Build lookup map: { questionId → correctIndex }
+    // Build lookup: { questionId → correctIndex }
     const correctMap = {};
     rows.forEach(r => { correctMap[r.id] = r.correct_answer_index; });
 
@@ -123,9 +124,9 @@ router.post('/:courseId/submit', auth, (req, res) => {
     let wrong   = 0;
 
     answers.forEach(a => {
-      const qId  = parseInt(a.questionId);
-      const sel  = parseInt(a.selectedIndex);
-      if (!(qId in correctMap)) return; // question not found — skip
+      const qId = parseInt(a.questionId);
+      const sel = parseInt(a.selectedIndex);
+      if (!(qId in correctMap)) return;
       if (sel === correctMap[qId]) correct++;
       else                          wrong++;
     });
@@ -133,22 +134,23 @@ router.post('/:courseId/submit', auth, (req, res) => {
     const total = correct + wrong;
     const score = total > 0 ? Math.round((correct / total) * 100) : 0;
 
-    // Optionally record attempt in student_quiz_answers table (if it exists)
-    // This is fire-and-forget — a failure here does NOT block the response
-    const insertAttempt = `
-      INSERT INTO student_quiz_answers
-        (student_id, course_id, level, correct, wrong, score, submitted_at)
-      VALUES (?, ?, ?, ?, ?, ?, NOW())`;
-    db.query(insertAttempt, [req.userId, courseId, level, correct, wrong, score], (e) => {
-      if (e) console.warn('[studentQuiz] could not save attempt (table may not exist):', e.message);
-    });
+    // Fire-and-forget — log attempt if table exists
+    db.query(
+      `INSERT INTO student_quiz_answers
+         (student_id, course_id, level, correct, wrong, score, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [req.userId, courseId, level, correct, wrong, score],
+      (e) => {
+        if (e) console.warn('[studentQuiz] could not save attempt:', e.message);
+      }
+    );
 
     return res.status(200).json({
       success: true,
       correct,
       wrong,
       total,
-      score,   // percentage 0-100
+      score,
     });
   });
 });
