@@ -221,6 +221,8 @@ router.get('/:id', auth, (req, res) => {
           quizQuestions: [], // populated below from quiz_questions table
         })),
     };
+    // Add this right after line: levels = typeof req.body.levels === 'string' ...
+  console.log('LEVELS RECEIVED:', JSON.stringify(levels, null, 2));
 
     // ✅ FIX: Fetch quiz questions safely — if the table doesn't exist yet,
     //    don't crash, just return the course without quiz questions.
