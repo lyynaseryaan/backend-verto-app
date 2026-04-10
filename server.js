@@ -16,6 +16,7 @@ const taskRoutes          = require('./routes/tasks');
 const resultRoutes        = require('./routes/resultRoute');
 const courseRoutes        = require('./routes/courses');
 const studentCourseRoutes = require('./routes/studentCourse');
+const notificationRoutes = require('./routes/notifications');
 
 app.use('/api/auth',            authRoutes);
 app.use('/api',                 levelRoutes);
@@ -24,8 +25,11 @@ app.use('/api/tasks',           taskRoutes);
 app.use('/api/result',          resultRoutes);
 app.use('/api/courses',         courseRoutes);
 app.use('/api/student/courses', studentCourseRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.listen(process.env.PORT, () => {
   // ✅ تصحيح: كان template literal ما يشتغل مع single quotes
   console.log(`Server running on port ${process.env.PORT}`);
 });
+
+
