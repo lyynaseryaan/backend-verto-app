@@ -36,6 +36,8 @@ function buildFullUrl(req, filePath) {
   return `${req.protocol}://${req.get('host')}/${clean}`;
 }
 
+// Detects whether a video path is a YouTube link or a local file
+// Returns: "youtube" | "local" | null
 function videoType(url) {
   if (!url) return null;
   if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
@@ -46,8 +48,11 @@ function videoType(url) {
 function shapeCourse(row, req, quiz) {
   const hasLevelContent = row.level_id !== null;
 
-  const youtubeUrl    = row.video_url       || null;
-  const localVideoUrl = row.video_file_path
+  // ── Video logic ──────────────────────────────────────────
+  // video_url   → YouTube or any external URL  (open externally)
+  // video_file_path → local MP4 upload         (play inside app)
+  const youtubeUrl   = row.video_url        || null;   // external
+  const localVideoUrl = row.video_file_path             // local — needs full URL
     ? buildFullUrl(req, row.video_file_path)
     : null;
 
@@ -67,11 +72,13 @@ function shapeCourse(row, req, quiz) {
       }
     : null;
 
-  return {
+ // Inside routes/studentCourse.js - Change the return in shapeCourse:
+
+return {
     id:          row.id,
     title:       row.title,
-    description: row.description || null,
-    course_type: row.course_type || null,
+    description: row.description  || null,
+    course_type: row.course_type  || null,
     image_path:  buildFullUrl(req, row.image_path) || null,
     created_at:  row.created_at,
     has_content: row.level_id !== null,
@@ -179,6 +186,9 @@ function attachQuizAndRespond(res, rows, req, pagination) {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses
+//  Returns ALL courses, with content filtered by student level.
+//  Courses that have no content for that level are still returned
+//  (has_content: false, lessons: []) so the student can see them.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/', auth, (req, res) => {
   const level = (req.query.level || '').trim();
@@ -201,7 +211,9 @@ router.get('/', auth, (req, res) => {
   if (search) { conditions.push('c.title LIKE ?');    filterParams.push(search); }
   if (type)   { conditions.push('c.course_type = ?'); filterParams.push(type);   }
 
-  const where    = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+  // Count total courses (ignoring level — we want ALL courses)
   const countSql = `SELECT COUNT(DISTINCT c.id) AS total FROM courses c ${where}`;
 
   db.query(countSql, filterParams, (countErr, countRows) => {
@@ -231,7 +243,10 @@ router.get('/', auth, (req, res) => {
       ORDER BY c.created_at DESC
       LIMIT ? OFFSET ?`;
 
-    db.query(sql, [level, ...filterParams, limit, offset], (err, rows) => {
+    // Order of params: level (for JOIN), filter params, pagination
+    const params = [level, ...filterParams, limit, offset];
+
+    db.query(sql, params, (err, rows) => {
       if (err) {
         console.error('[studentCourse] fetch error:', err);
         return res.status(500).json({ success: false, message: 'Database error' });
@@ -292,6 +307,7 @@ router.get('/enrolled', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:id
+//  Returns a single course with content for the given level.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id', auth, (req, res) => {
   const level    = (req.query.level || '').trim();
@@ -303,6 +319,7 @@ router.get('/:id', auth, (req, res) => {
       message: 'Query param "level" is required: Beginner | Intermediate | Advanced',
     });
   }
+
   if (isNaN(courseId)) {
     return res.status(400).json({ success: false, message: 'Invalid course id' });
   }
@@ -330,6 +347,7 @@ router.get('/:id', auth, (req, res) => {
       console.error('[studentCourse] single fetch error:', err);
       return res.status(500).json({ success: false, message: 'Database error' });
     }
+
     if (!rows.length) {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
