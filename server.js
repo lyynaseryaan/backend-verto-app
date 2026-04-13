@@ -28,7 +28,6 @@ app.use('/api/tasks',           taskRoutes);
 app.use('/api/result',          resultRoutes);
 app.use('/api/courses',         courseRoutes);
 app.use('/api/student/courses', studentCourseRoutes);
-app.use('/api/quiz', quizRouteNew);
 app.use('/api/notifications', notificationRoutes);
 
 
