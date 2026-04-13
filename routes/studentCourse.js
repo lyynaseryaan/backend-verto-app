@@ -42,14 +42,15 @@ function videoType(url) {
 // ✅ shapeCourse الآن يقبل quizQuestions لكل level
 function shapeCourse(row, req, quizMap) {
   const hasLevelContent = row.level_id !== null;
-
+ 
   const youtubeUrl    = row.video_url       || null;
   const localVideoUrl = row.video_file_path
     ? buildFullUrl(req, row.video_file_path)
     : null;
-
+ 
   const lesson = hasLevelContent
     ? {
+        level_id:        row.level_id,          // ✅ NEW — needed for quiz API calls
         level:           row.level,
         video_url:       youtubeUrl,
         video_type_url:  videoType(youtubeUrl),
@@ -59,11 +60,11 @@ function shapeCourse(row, req, quizMap) {
         quiz_note:       row.quiz_note    || null,
         pdf_course:      buildFullUrl(req, row.pdf_course)   || null,
         pdf_exercise:    buildFullUrl(req, row.pdf_exercise) || null,
-        // ✅ quiz_questions مرتبطة بهذا الـ level
+        // quiz_questions kept for backward compat (old format)
         quiz_questions:  quizMap[row.level_id] || [],
       }
     : null;
-
+ 
   return {
     id:          row.id,
     title:       row.title,
