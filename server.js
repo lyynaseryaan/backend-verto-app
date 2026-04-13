@@ -18,6 +18,8 @@ const courseRoutes        = require('./routes/courses');
 const studentCourseRoutes = require('./routes/studentCourse');
 const quizRouteNew = require('./routes/quizRoute');
 const notificationRoutes = require('./routes/notifications');
+const studentQuizRoutes = require('./routes/studentquiz');
+
 
 
 app.use('/api/auth',            authRoutes);
@@ -29,7 +31,7 @@ app.use('/api/courses',         courseRoutes);
 app.use('/api/student/courses', studentCourseRoutes);
 app.use('/api/quiz', quizRouteNew);
 app.use('/api/notifications', notificationRoutes);
-
+app.use('/api/student/quizzes', studentQuizRoutes);
 
 app.listen(process.env.PORT, () => {
   // ✅ تصحيح: كان template literal ما يشتغل مع single quotes

@@ -12,13 +12,19 @@ const jwt         = require('jsonwebtoken');
 const multer      = require('multer');
 const { storage } = require('../config/cloudinary');
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  CONSTANTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
 // ━━━ MULTER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const upload = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } });
 
+// ✅ FIX: Flutter sends thumbnail as 'thumbnailFile'
 const uploadCourseImage = upload.single('thumbnailFile');
 
+// ✅ FIX: Flutter sends level files as 'videoFile_Beginner', 'pdfCourseFile_Beginner', etc.
 const levelFileFields = [];
 for (const lvl of VALID_LEVELS) {
   levelFileFields.push({ name: `videoFile_${lvl}`,       maxCount: 1 });
@@ -27,12 +33,16 @@ for (const lvl of VALID_LEVELS) {
 }
 const uploadLevelFiles = upload.fields(levelFileFields);
 
+// Helper: safely extract a Cloudinary URL from multer's files object
 function fileUrl(files, fieldname) {
   if (!files || !files[fieldname] || !files[fieldname][0]) return null;
-  return files[fieldname][0].path;
+  return files[fieldname][0].path; // Cloudinary returns the full URL in .path
 }
 
-// ━━━ JWT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  JWT MIDDLEWARE — teacher only
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 function auth(req, res, next) {
   const header = req.headers['authorization'];
   if (!header)
@@ -49,13 +59,20 @@ function auth(req, res, next) {
   });
 }
 
-// ━━━ POST /api/courses ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POST /api/courses  —  Create a new course
+//
+//  ✅ FIX: Accept both 'courseType' (Flutter camelCase) and 'course_type' (legacy)
+//  ✅ FIX: Thumbnail field is 'thumbnailFile'
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.post('/', auth, (req, res) => {
   uploadCourseImage(req, res, (uploadErr) => {
     if (uploadErr)
       return res.status(400).json({ success: false, message: uploadErr.message });
 
     const { title, description } = req.body;
+    // ✅ FIX: Accept both camelCase (Flutter) and snake_case (legacy)
     const courseType = req.body.courseType || req.body.course_type || null;
     const chapter    = req.body.chapter    || null;
 
@@ -82,7 +99,13 @@ router.post('/', auth, (req, res) => {
   });
 });
 
-// ━━━ GET /api/courses ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses  —  All courses for the authenticated teacher
+//
+//  ✅ FIX: Return camelCase aliases so Flutter CourseModel.fromJson works
+//          without needing fallback logic
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.get('/', auth, (req, res) => {
   const sql = `
     SELECT c.id, c.title, c.description,
@@ -102,7 +125,13 @@ router.get('/', auth, (req, res) => {
   });
 });
 
-// ━━━ GET /api/courses/:id ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/:id  —  One course with levels + quiz questions
+//
+//  ✅ FIX: Return camelCase aliases so Flutter CourseDetailModel and
+//          LevelModel.fromJson work without fallback logic
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.get('/:id', auth, (req, res) => {
   const courseSql = `
     SELECT
@@ -127,6 +156,7 @@ router.get('/:id', auth, (req, res) => {
     if (!courseRows.length)
       return res.status(404).json({ success: false, message: 'Course not found' });
 
+    // Build base course object from first row
     const base = courseRows[0];
     const course = {
       id: base.id, teacherId: base.teacherId,
@@ -158,11 +188,13 @@ router.get('/:id', auth, (req, res) => {
       ORDER BY qq.course_level_id, qq.id`;
 
     db.query(quizSql, [req.params.id], (err2, quizRows) => {
+      // If quiz_questions table doesn't exist yet, just skip it gracefully
       if (err2) {
         console.warn('quiz_questions fetch failed:', err2.message);
         return res.status(200).json({ success: true, course });
       }
 
+      // Attach quiz questions to matching levels
       if (quizRows && quizRows.length) {
         quizRows.forEach(q => {
           const level = course.levels.find(l => l.id === q.course_level_id);
@@ -184,7 +216,13 @@ router.get('/:id', auth, (req, res) => {
   });
 });
 
-// ━━━ PUT /api/courses/:id ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  PUT /api/courses/:id  —  Update basic info and/or thumbnail
+//
+//  ✅ FIX: Accept both 'courseType' (Flutter) and 'course_type' (legacy)
+//  ✅ FIX: Thumbnail field is 'thumbnailFile'
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.put('/:id', auth, (req, res) => {
   uploadCourseImage(req, res, (uploadErr) => {
     if (uploadErr)
@@ -220,7 +258,10 @@ router.put('/:id', auth, (req, res) => {
   });
 });
 
-// ━━━ DELETE /api/courses/:id ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  DELETE /api/courses/:id
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.delete('/:id', auth, (req, res) => {
   db.query(
     'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
@@ -238,12 +279,27 @@ router.delete('/:id', auth, (req, res) => {
   );
 });
 
-// ━━━ POST /api/courses/:id/levels ━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POST /api/courses/:id/levels
+//
+//  Saves content for all 3 adaptive levels.
+//
+//  ✅ FIX: File field names match Flutter:
+//            videoFile_Beginner, pdfCourseFile_Beginner, pdfExerciseFile_Beginner
+//
+//  ✅ FIX: JSON level keys match Flutter LevelPayload.toJson():
+//            { level, videoUrl, textContent, quizNote }   (camelCase)
+//
+//  ✅ FIX: quiz_questions save is wrapped safely — if the table doesn't
+//          exist, levels still save successfully and we return 200.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 router.post('/:id/levels', auth, (req, res) => {
   uploadLevelFiles(req, res, (uploadErr) => {
     if (uploadErr)
       return res.status(400).json({ success: false, message: uploadErr.message });
 
+    // ── Parse levels payload ──────────────────────────────
     let levels;
     try {
       levels = typeof req.body.levels === 'string'
@@ -256,12 +312,14 @@ router.post('/:id/levels', auth, (req, res) => {
     if (!levels || !Array.isArray(levels) || !levels.length)
       return res.status(400).json({ success: false, message: 'levels array is required' });
 
+    // ── Validate level names ──────────────────────────────
     const invalidLevel = levels.find(l => !VALID_LEVELS.includes(l.level));
     if (invalidLevel)
       return res.status(400).json({
         success: false, message: `level must be one of: ${VALID_LEVELS.join(', ')}`,
       });
 
+    // ── Verify course ownership ───────────────────────────
     db.query(
       'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
@@ -285,6 +343,8 @@ router.post('/:id/levels', auth, (req, res) => {
         });
 
         // ── Upsert course_levels ──────────────────────────
+        // Text fields always overwrite. File paths use COALESCE to
+        // preserve existing Cloudinary URLs when no new file is sent.
         db.query(
           `INSERT INTO course_levels
              (course_id, level, video_url, video_file_path,
@@ -293,7 +353,7 @@ router.post('/:id/levels', auth, (req, res) => {
            ON DUPLICATE KEY UPDATE
              video_url       = VALUES(video_url),
              text_content    = VALUES(text_content),
-             quiz_note       = NULL,
+             quiz_note       = VALUES(quiz_note),
              video_file_path = COALESCE(VALUES(video_file_path), video_file_path),
              pdf_course      = COALESCE(VALUES(pdf_course),      pdf_course),
              pdf_exercise    = COALESCE(VALUES(pdf_exercise),    pdf_exercise)`,
@@ -317,10 +377,12 @@ router.post('/:id/levels', auth, (req, res) => {
                 const levelMap = {};
                 levelIds.forEach(r => { levelMap[r.level] = r.id; });
 
-                // ── تحقق إذا في quiz_questions في الـ payload ──
-                const hasQuiz = levels.some(
-                  l => Array.isArray(l.quiz_questions) && l.quiz_questions.length > 0
-                );
+                // Build quiz_questions INSERT rows
+                const quizInserts = [];
+                levels.forEach(level => {
+                  const courseLevelId = levelMap[level.level];
+                  if (!courseLevelId) return;
+                  if (!Array.isArray(level.quiz_questions) || !level.quiz_questions.length) return;
 
                 if (!hasQuiz) {
                   return res.status(200).json({ success: true, message: 'Levels saved successfully' });
