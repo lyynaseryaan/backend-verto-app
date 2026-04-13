@@ -576,6 +576,8 @@ router.get('/:courseId/quiz', auth, (req, res) => {
   const courseId = parseInt(req.params.courseId);
   const level    = (req.query.level || '').trim();
 
+   const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
+   
   if (isNaN(courseId))
     return res.status(400).json({ success: false, message: 'Invalid course id' });
 
@@ -584,6 +586,8 @@ router.get('/:courseId/quiz', auth, (req, res) => {
       success: false,
       message: 'Query param "level" is required: Beginner | Intermediate | Advanced',
     });
+
+ 
 
   // Step 1: find the course_level_id for this course + student level
   db.query(
