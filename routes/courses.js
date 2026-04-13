@@ -1,6 +1,7 @@
 // ============================================================
 //  routes/courses.js  –  Verto LMS Backend
-//  ✅ Quiz يُحفظ في: quizzes + quizinstructor_question + quiz_options
+//  ✅ Quiz يُخزن فقط في quiz_questions table
+//     (id, course_level_id, question_text, options JSON, correct_answer_index)
 //  ✅ كل باقي الكود محفوظ كما هو
 // ============================================================
 
@@ -14,10 +15,7 @@ const { storage } = require('../config/cloudinary');
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
 // ━━━ MULTER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const upload = multer({
-  storage,
-  limits: { fileSize: 200 * 1024 * 1024 },
-});
+const upload = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } });
 
 const uploadCourseImage = upload.single('thumbnailFile');
 
@@ -67,21 +65,17 @@ router.post('/', auth, (req, res) => {
     const imagePath = req.file ? req.file.path : null;
 
     db.query(
-      `INSERT INTO courses
-         (teacher_id, title, description, course_type, chapter, image_path)
+      `INSERT INTO courses (teacher_id, title, description, course_type, chapter, image_path)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [req.userId, title.trim(), description || null,
-       courseType, chapter, imagePath],
+      [req.userId, title.trim(), description || null, courseType, chapter, imagePath],
       (err, result) => {
         if (err) {
           console.error('DB error creating course:', err);
           return res.status(500).json({ success: false, message: 'Database error' });
         }
         res.status(201).json({
-          success:  true,
-          message:  'Course created',
-          courseId: result.insertId,
-          imagePath,
+          success: true, message: 'Course created',
+          courseId: result.insertId, imagePath,
         });
       }
     );
@@ -91,16 +85,11 @@ router.post('/', auth, (req, res) => {
 // ━━━ GET /api/courses ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/', auth, (req, res) => {
   const sql = `
-    SELECT
-      c.id,
-      c.title,
-      c.description,
-      c.course_type   AS courseType,
-      c.chapter,
-      c.image_path    AS imagePath,
-      c.created_at    AS createdAt,
-      c.updated_at    AS updatedAt,
-      COUNT(DISTINCT cl.id) AS levelsCount
+    SELECT c.id, c.title, c.description,
+           c.course_type AS courseType, c.chapter,
+           c.image_path  AS imagePath,
+           c.created_at  AS createdAt, c.updated_at AS updatedAt,
+           COUNT(DISTINCT cl.id) AS levelsCount
     FROM courses c
     LEFT JOIN course_levels cl ON cl.course_id = c.id
     WHERE c.teacher_id = ?
@@ -108,10 +97,7 @@ router.get('/', auth, (req, res) => {
     ORDER BY c.created_at DESC`;
 
   db.query(sql, [req.userId], (err, rows) => {
-    if (err) {
-      console.error('DB error fetching courses:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
     res.status(200).json({ success: true, courses: rows });
   });
 });
@@ -120,15 +106,10 @@ router.get('/', auth, (req, res) => {
 router.get('/:id', auth, (req, res) => {
   const courseSql = `
     SELECT
-      c.id,
-      c.teacher_id    AS teacherId,
-      c.title,
-      c.description,
-      c.course_type   AS courseType,
-      c.chapter,
-      c.image_path    AS imagePath,
-      c.created_at    AS createdAt,
-      c.updated_at    AS updatedAt,
+      c.id, c.teacher_id AS teacherId, c.title, c.description,
+      c.course_type AS courseType, c.chapter,
+      c.image_path  AS imagePath,
+      c.created_at  AS createdAt, c.updated_at AS updatedAt,
       cl.id               AS levelId,
       cl.level,
       cl.video_url        AS videoUrl,
@@ -142,95 +123,59 @@ router.get('/:id', auth, (req, res) => {
     WHERE c.id = ? AND c.teacher_id = ?`;
 
   db.query(courseSql, [req.params.id, req.userId], (err, courseRows) => {
-    if (err) {
-      console.error('DB error fetching course:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
     if (!courseRows.length)
       return res.status(404).json({ success: false, message: 'Course not found' });
 
     const base = courseRows[0];
     const course = {
-      id:          base.id,
-      teacherId:   base.teacherId,
-      title:       base.title,
-      description: base.description,
-      courseType:  base.courseType,
-      chapter:     base.chapter,
-      imagePath:   base.imagePath,
-      createdAt:   base.createdAt,
-      updatedAt:   base.updatedAt,
+      id: base.id, teacherId: base.teacherId,
+      title: base.title, description: base.description,
+      courseType: base.courseType, chapter: base.chapter,
+      imagePath: base.imagePath,
+      createdAt: base.createdAt, updatedAt: base.updatedAt,
       levels: courseRows
         .filter(r => r.levelId !== null)
         .map(r => ({
-          id:            r.levelId,
-          level:         r.level,
+          id: r.levelId, level: r.level,
           videoUrl:      r.videoUrl      ?? '',
           videoFilePath: r.videoFilePath ?? '',
           textContent:   r.textContent   ?? '',
           quizNote:      r.quizNote      ?? '',
           pdfCourse:     r.pdfCourse     ?? '',
           pdfExercise:   r.pdfExercise   ?? '',
-          quizQuestions: [],
+          quizQuestions: [], // تتملى من quiz_questions ↓
         })),
     };
 
-    // ✅ جيب quiz من الجداول الجديدة
+    // ✅ جيب quiz_questions المرتبطة بهذا الكورس
     const quizSql = `
-      SELECT
-        qz.id              AS quizId,
-        qz.level_course_id AS levelCourseId,
-        qz.title           AS quizTitle,
-        qq.id              AS questionId,
-        qq.question_text   AS questionText,
-        qo.id              AS optionId,
-        qo.option_text     AS optionText,
-        qo.is_correct      AS isCorrect
-      FROM quizzes qz
-      LEFT JOIN quizinstructor_question qq ON qq.quiz_id      = qz.id
-      LEFT JOIN quiz_options            qo ON qo.question_id  = qq.id
-      INNER JOIN course_levels cl ON cl.id = qz.level_course_id
+      SELECT qq.id, qq.course_level_id, qq.question_text,
+             qq.options, qq.correct_answer_index
+      FROM quiz_questions qq
+      INNER JOIN course_levels cl ON cl.id = qq.course_level_id
       WHERE cl.course_id = ?
-      ORDER BY qz.level_course_id, qq.id, qo.id`;
+      ORDER BY qq.course_level_id, qq.id`;
 
     db.query(quizSql, [req.params.id], (err2, quizRows) => {
       if (err2) {
-        console.warn('Quiz fetch failed:', err2.message);
+        console.warn('quiz_questions fetch failed:', err2.message);
         return res.status(200).json({ success: true, course });
       }
 
       if (quizRows && quizRows.length) {
-        // نبني map: levelCourseId → quiz object
-        const quizMap = {};
-        quizRows.forEach(row => {
-          const lid = row.levelCourseId;
-          if (!quizMap[lid]) {
-            quizMap[lid] = {
-              id:        row.quizId,
-              title:     row.quizTitle,
-              questions: [],
-            };
-          }
-          if (!row.questionId) return;
-          let q = quizMap[lid].questions.find(x => x.id === row.questionId);
-          if (!q) {
-            q = { id: row.questionId, questionText: row.questionText, options: [] };
-            quizMap[lid].questions.push(q);
-          }
-          if (row.optionId) {
-            q.options.push({
-              id:          row.optionId,
-              optionText:  row.optionText,
-              isCorrect:   row.isCorrect === 1,
-            });
-          }
-        });
-
-        // ألحق الـ quiz بكل level
-        course.levels.forEach(level => {
-          if (quizMap[level.id]) {
-            level.quiz = quizMap[level.id];
-          }
+        quizRows.forEach(q => {
+          const level = course.levels.find(l => l.id === q.course_level_id);
+          if (!level) return;
+          let options = q.options;
+          try { if (typeof options === 'string') options = JSON.parse(options); }
+          catch (_) { options = []; }
+          level.quizQuestions.push({
+            id:                 q.id,
+            questionText:       q.question_text,
+            options,
+            correctAnswerIndex: q.correct_answer_index,
+          });
         });
       }
 
@@ -249,38 +194,25 @@ router.put('/:id', auth, (req, res) => {
       'SELECT id, image_path FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
       (err, rows) => {
-        if (err)
-          return res.status(500).json({ success: false, message: 'Database error' });
+        if (err) return res.status(500).json({ success: false, message: 'Database error' });
         if (!rows.length)
-          return res.status(404).json({
-            success: false, message: 'Course not found or unauthorized',
-          });
+          return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
 
         const { title, description } = req.body;
-        const courseType = req.body.courseType || req.body.course_type || null;
-        const chapter    = req.body.chapter    || null;
+        const courseType   = req.body.courseType || req.body.course_type || null;
+        const chapter      = req.body.chapter    || null;
         const newImagePath = req.file ? req.file.path : rows[0].image_path;
 
         db.query(
           `UPDATE courses
-           SET title       = COALESCE(?, title),
-               description = COALESCE(?, description),
-               course_type = COALESCE(?, course_type),
-               chapter     = COALESCE(?, chapter),
-               image_path  = ?
-           WHERE id = ? AND teacher_id = ?`,
-          [title || null, description || null, courseType,
-           chapter, newImagePath, req.params.id, req.userId],
+           SET title=COALESCE(?,title), description=COALESCE(?,description),
+               course_type=COALESCE(?,course_type), chapter=COALESCE(?,chapter), image_path=?
+           WHERE id=? AND teacher_id=?`,
+          [title||null, description||null, courseType, chapter,
+           newImagePath, req.params.id, req.userId],
           (err2) => {
-            if (err2) {
-              console.error('DB error updating course:', err2);
-              return res.status(500).json({ success: false, message: 'Database error' });
-            }
-            res.status(200).json({
-              success:   true,
-              message:   'Course updated',
-              imagePath: newImagePath,
-            });
+            if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+            res.status(200).json({ success: true, message: 'Course updated', imagePath: newImagePath });
           }
         );
       }
@@ -294,18 +226,12 @@ router.delete('/:id', auth, (req, res) => {
     'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
     [req.params.id, req.userId],
     (err, rows) => {
-      if (err)
-        return res.status(500).json({ success: false, message: 'Database error' });
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
       if (!rows.length)
-        return res.status(404).json({
-          success: false, message: 'Course not found or unauthorized',
-        });
+        return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
 
       db.query('DELETE FROM courses WHERE id = ?', [req.params.id], (err2) => {
-        if (err2) {
-          console.error('DB error deleting course:', err2);
-          return res.status(500).json({ success: false, message: 'Database error' });
-        }
+        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
         res.status(200).json({ success: true, message: 'Course deleted' });
       });
     }
@@ -324,9 +250,7 @@ router.post('/:id/levels', auth, (req, res) => {
         ? JSON.parse(req.body.levels)
         : req.body.levels;
     } catch (_) {
-      return res.status(400).json({
-        success: false, message: 'levels must be a valid JSON array',
-      });
+      return res.status(400).json({ success: false, message: 'levels must be a valid JSON array' });
     }
 
     if (!levels || !Array.isArray(levels) || !levels.length)
@@ -335,32 +259,26 @@ router.post('/:id/levels', auth, (req, res) => {
     const invalidLevel = levels.find(l => !VALID_LEVELS.includes(l.level));
     if (invalidLevel)
       return res.status(400).json({
-        success: false,
-        message: `level must be one of: ${VALID_LEVELS.join(', ')}`,
+        success: false, message: `level must be one of: ${VALID_LEVELS.join(', ')}`,
       });
 
     db.query(
       'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
       (err, rows) => {
-        if (err)
-          return res.status(500).json({ success: false, message: 'Database error' });
+        if (err) return res.status(500).json({ success: false, message: 'Database error' });
         if (!rows.length)
-          return res.status(404).json({
-            success: false, message: 'Course not found or unauthorized',
-          });
+          return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
 
-        const files = req.files || {};
-
+        const files     = req.files || {};
         const levelRows = levels.map(l => {
           const lvl = l.level;
           return [
-            req.params.id,
-            lvl,
+            req.params.id, lvl,
             l.videoUrl    || null,
             fileUrl(files, `videoFile_${lvl}`),
             l.textContent || null,
-            null,                                      // ✅ quiz_note = null دائماً
+            null,                                    // quiz_note = null دائماً
             fileUrl(files, `pdfCourseFile_${lvl}`),
             fileUrl(files, `pdfExerciseFile_${lvl}`),
           ];
@@ -386,17 +304,14 @@ router.post('/:id/levels', auth, (req, res) => {
               return res.status(500).json({ success: false, message: 'Error saving levels' });
             }
 
-            // ── جيب الـ level IDs ─────────────────────────
+            // ── جيب IDs تاع الـ levels ────────────────────
             db.query(
               'SELECT id, level FROM course_levels WHERE course_id = ? AND level IN (?)',
               [req.params.id, levels.map(l => l.level)],
               (err3, levelIds) => {
                 if (err3) {
                   console.warn('Could not fetch level IDs:', err3.message);
-                  return res.status(200).json({
-                    success: true,
-                    message: 'Levels saved. Quiz skipped.',
-                  });
+                  return res.status(200).json({ success: true, message: 'Levels saved. Quiz skipped.' });
                 }
 
                 const levelMap = {};
@@ -408,112 +323,66 @@ router.post('/:id/levels', auth, (req, res) => {
                 );
 
                 if (!hasQuiz) {
-                  return res.status(200).json({
-                    success: true,
-                    message: 'Levels saved successfully',
-                  });
+                  return res.status(200).json({ success: true, message: 'Levels saved successfully' });
                 }
 
-                // ── احفظ Quiz في الجداول الجديدة ─────────────
-                // نعالج كل level اللي عندها quiz بشكل متسلسل
-                const levelsWithQuiz = levels.filter(
-                  l => Array.isArray(l.quiz_questions) && l.quiz_questions.length > 0
-                );
+                // ── احفظ في quiz_questions ─────────────────
+                // اجمع كل الأسئلة من كل الـ levels
+                const quizRows = [];
+                levels.forEach(l => {
+                  const courseLevelId = levelMap[l.level];
+                  if (!courseLevelId) return;
+                  if (!Array.isArray(l.quiz_questions) || !l.quiz_questions.length) return;
 
-                let processed = 0;
+                  l.quiz_questions.forEach(q => {
+                    quizRows.push([
+                      courseLevelId,
+                      q.questionText,
+                      JSON.stringify(q.options),   // ✅ options كـ JSON string
+                      q.correctAnswerIndex,
+                    ]);
+                  });
+                });
 
-                const saveNextLevel = (index) => {
-                  if (index >= levelsWithQuiz.length) {
-                    // كل الـ levels اتحفظت
-                    return res.status(200).json({
-                      success: true,
-                      message: 'Levels and quiz saved successfully',
-                    });
-                  }
+                if (!quizRows.length) {
+                  return res.status(200).json({ success: true, message: 'Levels saved successfully' });
+                }
 
-                  const levelData      = levelsWithQuiz[index];
-                  const courseLevelId  = levelMap[levelData.level];
-                  if (!courseLevelId) return saveNextLevel(index + 1);
-
-                  const quizTitle = levelData.quizTitle || 'Quiz';
-
-                  // 1. احذف الـ quiz القديم لهذا الـ level (cascade يحذف questions + options)
-                  db.query(
-                    'DELETE FROM quizzes WHERE level_course_id = ?',
-                    [courseLevelId],
-                    (err4) => {
-                      if (err4) {
-                        console.warn('Delete old quiz failed:', err4.message);
-                        return saveNextLevel(index + 1);
-                      }
-
-                      // 2. أنشئ quiz جديد
-                      db.query(
-                        'INSERT INTO quizzes (level_course_id, title) VALUES (?, ?)',
-                        [courseLevelId, quizTitle],
-                        (err5, quizResult) => {
-                          if (err5) {
-                            console.warn('Insert quiz failed:', err5.message);
-                            return saveNextLevel(index + 1);
-                          }
-
-                          const quizId    = quizResult.insertId;
-                          const questions = levelData.quiz_questions;
-                          let   qIndex    = 0;
-
-                          // 3. احفظ كل سؤال مع خياراته بشكل متسلسل
-                          const saveNextQuestion = (qi) => {
-                            if (qi >= questions.length) {
-                              return saveNextLevel(index + 1);
-                            }
-
-                            const q = questions[qi];
-
-                            db.query(
-                              'INSERT INTO quizinstructor_question (quiz_id, question_text) VALUES (?, ?)',
-                              [quizId, q.questionText],
-                              (err6, qResult) => {
-                                if (err6) {
-                                  console.warn('Insert question failed:', err6.message);
-                                  return saveNextQuestion(qi + 1);
-                                }
-
-                                const questionId = qResult.insertId;
-                                const options    = q.options || [];
-
-                                if (!options.length) {
-                                  return saveNextQuestion(qi + 1);
-                                }
-
-                                // 4. احفظ الخيارات دفعة واحدة
-                                const optionRows = options.map(o => [
-                                  questionId,
-                                  o.optionText,
-                                  o.isCorrect ? 1 : 0,
-                                ]);
-
-                                db.query(
-                                  'INSERT INTO quiz_options (question_id, option_text, is_correct) VALUES ?',
-                                  [optionRows],
-                                  (err7) => {
-                                    if (err7) {
-                                      console.warn('Insert options failed:', err7.message);
-                                    }
-                                    saveNextQuestion(qi + 1);
-                                  }
-                                );
-                              }
-                            );
-                          };
-
-                          saveNextQuestion(0);
-                        }
-                      );
+                // احذف الأسئلة القديمة لهذا الـ course أولاً
+                const levelIds2 = Object.values(levelMap);
+                db.query(
+                  'DELETE FROM quiz_questions WHERE course_level_id IN (?)',
+                  [levelIds2],
+                  (err4) => {
+                    if (err4) {
+                      console.warn('Delete old quiz_questions failed:', err4.message);
+                      // ما نوقفوش — نحاولو نحفظو على حساب
                     }
-                  );
-                };
 
-                saveNextLevel(0);
+                    // أدخل الأسئلة الجديدة دفعة واحدة
+                    db.query(
+                      `INSERT INTO quiz_questions
+                         (course_level_id, question_text, options, correct_answer_index)
+                       VALUES ?`,
+                      [quizRows],
+                      (err5) => {
+                        if (err5) {
+                          console.warn('Insert quiz_questions failed:', err5.message);
+                          return res.status(200).json({
+                            success: true,
+                            message: 'Levels saved. Quiz could not be saved.',
+                          });
+                        }
+
+                        res.status(200).json({
+                          success:            true,
+                          message:            'Levels and quiz questions saved successfully',
+                          quizQuestionsCount: quizRows.length,
+                        });
+                      }
+                    );
+                  }
+                );
               }
             );
           }
