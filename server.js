@@ -16,7 +16,6 @@ const taskRoutes          = require('./routes/tasks');
 const resultRoutes        = require('./routes/resultRoute');
 const courseRoutes        = require('./routes/courses');
 const studentCourseRoutes = require('./routes/studentCourse');
-const quizRouteNew = require('./routes/quizRoute');
 const notificationRoutes = require('./routes/notifications');
 
 
@@ -31,7 +30,7 @@ app.use('/api/courses',         courseRoutes);
 app.use('/api/student/courses', studentCourseRoutes);
 app.use('/api/quiz', quizRouteNew);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/quizRoute', quizRouteNew);
+
 
 
 app.listen(process.env.PORT, () => {
