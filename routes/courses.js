@@ -377,17 +377,6 @@ router.post('/:id/levels', auth, (req, res) => {
                 const levelMap = {};
                 levelIds.forEach(r => { levelMap[r.level] = r.id; });
 
-                // Build quiz_questions INSERT rows
-                const quizInserts = [];
-                levels.forEach(level => {
-                  const courseLevelId = levelMap[level.level];
-                  if (!courseLevelId) return;
-                  if (!Array.isArray(level.quiz_questions) || !level.quiz_questions.length) return;
-
-                if (!hasQuiz) {
-                  return res.status(200).json({ success: true, message: 'Levels saved successfully' });
-                }
-
                 // ── احفظ في quiz_questions ─────────────────
                 // اجمع كل الأسئلة من كل الـ levels
                 const quizRows = [];
