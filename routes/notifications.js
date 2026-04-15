@@ -123,10 +123,6 @@ router.delete('/:id', verifyToken, async (req, res) => {
 // ─── POST /api/notifications/test ───────────────────────────────────────────
 // Dev-only endpoint to seed a test notification.
 router.post('/test', verifyToken, async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(403).json({ error: 'Not available in production' });
-  }
-
   const { type, title, message } = req.body;
 
   const validTypes = ['course_update', 'quiz_result', 'progress_milestone', 'task_deadline', 'level_change'];
