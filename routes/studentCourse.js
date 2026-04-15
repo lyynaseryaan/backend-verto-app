@@ -858,5 +858,34 @@ router.get('/:courseId/quiz/history', auth, (req, res) => {
     }
   );
 });
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/student/courses/:id/progress
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/:id/progress', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId))
+    return res.status(400).json({ success: false, message: 'Invalid course id' });
+
+  db.query(
+    `SELECT video_progress, pdf_opened, quiz_completed, progress
+     FROM enrollments
+     WHERE student_id = ? AND course_id = ?`,
+    [req.userId, courseId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      if (!rows.length)
+        return res.status(404).json({ success: false, message: 'Not enrolled' });
+
+      const r = rows[0];
+      return res.status(200).json({
+        success:        true,
+        video_progress: parseFloat((r.video_progress * 100).toFixed(1)),  // 0–100
+        pdf_opened:     r.pdf_opened     === 1,
+        quiz_completed: r.quiz_completed === 1,
+        progress:       Math.round(r.progress * 100),                     // 0–100
+      });
+    }
+  );
+});
 
 module.exports = router;
