@@ -127,13 +127,13 @@ router.delete('/:id', adminAuth, async (req, res) => {
       [userId, 'teacher']
     );
     if (!rows.length)
-      return res.status(404).json({ success: false, message: 'Instructor not found' });
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
 
     await queryAsync('DELETE FROM users WHERE id = ?', [userId]);
 
     return res.status(200).json({
       success: true,
-      message: 'Instructor deleted successfully',
+      message: 'Teacher deleted successfully',
     });
 
   } catch (err) {
