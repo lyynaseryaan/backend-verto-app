@@ -63,9 +63,9 @@ router.post('/', adminAuth, async (req, res) => {
 
     // ── Insert into instructors ───────────────────────
     await queryAsync(
-      'INSERT INTO instructors (user_id) VALUES (?)',
-      [userId]
-    );
+  'INSERT INTO instructors (user_id, subject) VALUES (?, ?)',
+  [userId, subject.trim()]
+);
 
     return res.status(201).json({
       success:    true,
@@ -90,6 +90,7 @@ router.get('/', adminAuth, async (req, res) => {
          u.email,
          u.created_at,
          i.id AS instructor_id
+         i.subject 
        FROM instructors i
        INNER JOIN users u ON u.id = i.user_id
        ORDER BY u.created_at DESC`
