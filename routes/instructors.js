@@ -146,5 +146,74 @@ function queryAsync(sql, params = []) {
     });
   });
 }
+// ━━━ POST: add subject to validation + insert ━━━━━━━━━━━━
+
+router.post('/', adminAuth, async (req, res) => {
+  const { name, email, password, subject } = req.body; // ← add subject
+
+  if (!name || !name.trim())
+    return res.status(400).json({ success: false, message: 'Name is required' });
+  if (!email || !email.trim())
+    return res.status(400).json({ success: false, message: 'Email is required' });
+  if (!password || password.length < 6)
+    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+  if (!subject || !subject.trim())                      // ← validate subject
+    return res.status(400).json({ success: false, message: 'Subject is required' });
+
+  try {
+    const existing = await queryAsync(
+      'SELECT id FROM users WHERE email = ? LIMIT 1', [email.trim()]
+    );
+    if (existing.length > 0)
+      return res.status(409).json({ success: false, message: 'Email already in use' });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const userResult = await queryAsync(
+      `INSERT INTO users (name, email, password, language, role)
+       VALUES (?, ?, ?, 'ar', 'instructor')`,
+      [name.trim(), email.trim(), hashed]
+    );
+    const userId = userResult.insertId;
+
+    await queryAsync(
+      'INSERT INTO instructors (user_id, subject) VALUES (?, ?)', // ← save subject
+      [userId, subject.trim()]
+    );
+
+    return res.status(201).json({
+      success:    true,
+      message:    'Instructor created successfully',
+      instructor: { id: userId, name: name.trim(), email: email.trim(), subject: subject.trim() },
+    });
+
+  } catch (err) {
+    console.error('[instructors] create error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ━━━ GET: include subject in SELECT ━━━━━━━━━━━━━━━━━━━━━━
+
+router.get('/', adminAuth, async (req, res) => {
+  try {
+    const rows = await queryAsync(
+      `SELECT
+         u.id,
+         u.name,
+         u.email,
+         u.created_at,
+         i.id      AS instructor_id,
+         i.subject                    -- ← add this
+       FROM instructors i
+       INNER JOIN users u ON u.id = i.user_id
+       ORDER BY u.created_at DESC`
+    );
+    return res.status(200).json({ success: true, count: rows.length, instructors: rows });
+  } catch (err) {
+    console.error('[instructors] list error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 module.exports = router;
