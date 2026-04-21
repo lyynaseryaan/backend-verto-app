@@ -58,7 +58,7 @@ router.post('/', adminAuth, async (req, res) => {
     // ── Insert into users ─────────────────────────────
     const userResult = await queryAsync(
       `INSERT INTO users (name, email, password, language, role)
-       VALUES (?, ?, ?, 'ar', 'instructor')`,
+       VALUES (?, ?, ?, 'ar', 'teacher')`,
       [name.trim(), email.trim(), hashed]
     );
     const userId = userResult.insertId;
@@ -124,16 +124,16 @@ router.delete('/:id', adminAuth, async (req, res) => {
   try {
     const rows = await queryAsync(
       'SELECT id FROM users WHERE id = ? AND role = ? LIMIT 1',
-      [userId, 'instructor']
+      [userId, 'teacher']
     );
     if (!rows.length)
-      return res.status(404).json({ success: false, message: 'Instructor not found' });
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
 
     await queryAsync('DELETE FROM users WHERE id = ?', [userId]);
 
     return res.status(200).json({
       success: true,
-      message: 'Instructor deleted successfully',
+      message: 'Teacher deleted successfully',
     });
 
   } catch (err) {
