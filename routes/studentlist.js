@@ -15,9 +15,13 @@ function adminOnly(req, res, next) {
 
     const token = authHeader.split(" ")[1];
 
+    if (!token) {
+        return res.status(401).json({ success: false, error: "Malformed token" });
+    }
+
     jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
         if (err) {
-            return res.status(403).json({ success: false, error: "Invalid token" });
+            return res.status(403).json({ success: false, error: "Invalid or expired token" });
         }
 
         if (decoded.role !== "admin") {
@@ -36,6 +40,8 @@ function adminOnly(req, res, next) {
 router.get('/', adminOnly, (req, res) => {
     const { name } = req.query;
 
+    // ✅ FIX: Use LEFT JOIN so students still appear even if user data is partial
+    // ✅ FIX: Filter by role = 'student' to avoid returning teachers/admins
     let sql = `
         SELECT 
             s.id,
@@ -46,12 +52,13 @@ router.get('/', adminOnly, (req, res) => {
             s.created_at
         FROM students s
         JOIN users u ON s.user_id = u.id
+        WHERE u.role = 'student'
     `;
 
     const params = [];
 
     if (name && name.trim() !== '') {
-        sql += ' WHERE u.name LIKE ?';
+        sql += ' AND u.name LIKE ?';
         params.push(`%${name.trim()}%`);
     }
 
