@@ -27,7 +27,6 @@ router.get('/', auth, (req, res) => {
     res.status(200).json({ success: true, tasks: results });
   });
 });
-
 // ================= ADD TASK =================
 router.post('/add', auth, (req, res) => {
   const { title, duration } = req.body;
@@ -43,8 +42,6 @@ router.post('/add', auth, (req, res) => {
     const insertSql = "INSERT INTO tasks (user_id, title, duration, status) VALUES (?, ?, ?, 'pending')";
     db.query(insertSql, [req.userId, title, duration], (err, result) => {
       if (err) return res.status(500).json({ success: false, message: "Database error" });
-
-      // ✅ نرجعو taskId باش الفرونت يحفظو
       res.status(201).json({
         success: true,
         message: "Task added successfully",

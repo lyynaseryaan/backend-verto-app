@@ -1,15 +1,15 @@
 // ============================================================
-//  routes/admin/instructors.js  –  Verto LMS
-//  POST /api/admin/instructors       → create instructor
-//  GET  /api/admin/instructors       → list all instructors
-//  DELETE /api/admin/instructors/:id → delete instructor
+//  routes/instructors.js  –  Verto LMS
+//  ✅ FIX 1: require('../db') صحيح — الملف في routes/ مباشرة
+//  ✅ FIX 2: router.post('/') مرة واحدة فقط — حذفنا المكررة
+//  ✅ FIX 3: فاصلة ناقصة في SQL بين i.id وi.subject
 // ============================================================
 
-const express  = require('express');
-const router   = express.Router();
-const db       = require('../db');
-const bcrypt   = require('bcryptjs');
-const jwt      = require('jsonwebtoken');
+const express = require('express');
+const router  = express.Router();
+const db      = require('../db');        // ✅ FIX 1: كان ../../db — صح الآن
+const bcrypt  = require('bcryptjs');
+const jwt     = require('jsonwebtoken');
 
 // ━━━ Admin-only middleware ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function adminAuth(req, res, next) {
@@ -28,10 +28,10 @@ function adminAuth(req, res, next) {
   });
 }
 
-// ━━━ POST /api/admin/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Creates a user with role="instructor" + row in instructors table
+// ━━━ POST /api/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ✅ FIX 2: route واحدة فقط — دمجنا الـ subject مع التحقق الأول
 router.post('/', adminAuth, async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, subject } = req.body;
 
   // ── Validate ──────────────────────────────────────────
   if (!name || !name.trim())
@@ -40,9 +40,11 @@ router.post('/', adminAuth, async (req, res) => {
     return res.status(400).json({ success: false, message: 'Email is required' });
   if (!password || password.length < 6)
     return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+  if (!subject || !subject.trim())
+    return res.status(400).json({ success: false, message: 'Subject is required' });
 
   try {
-    // ── Check email already exists ────────────────────
+    // ── Check email duplicate ─────────────────────────
     const existing = await queryAsync(
       'SELECT id FROM users WHERE email = ? LIMIT 1',
       [email.trim()]
@@ -56,136 +58,26 @@ router.post('/', adminAuth, async (req, res) => {
     // ── Insert into users ─────────────────────────────
     const userResult = await queryAsync(
       `INSERT INTO users (name, email, password, language, role)
-       VALUES (?, ?, ?, 'ar', 'instructor')`,
+       VALUES (?, ?, ?, 'ar', 'teacher')`,
       [name.trim(), email.trim(), hashed]
     );
     const userId = userResult.insertId;
 
     // ── Insert into instructors ───────────────────────
     await queryAsync(
-  'INSERT INTO instructors (user_id, subject) VALUES (?, ?)',
-  [userId, subject.trim()]
-);
-
-    return res.status(201).json({
-      success:    true,
-      message:    'Instructor created successfully',
-      instructor: { id: userId, name: name.trim(), email: email.trim() },
-    });
-
-  } catch (err) {
-    console.error('[admin/instructors] create error:', err);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ━━━ GET /api/admin/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Returns all instructors (joined with users)
-router.get('/', adminAuth, async (req, res) => {
-  try {
-    const rows = await queryAsync(
-      `SELECT
-         u.id,
-         u.name,
-         u.email,
-         u.created_at,
-         i.id AS instructor_id
-         i.subject 
-       FROM instructors i
-       INNER JOIN users u ON u.id = i.user_id
-       ORDER BY u.created_at DESC`
-    );
-
-    return res.status(200).json({
-      success:     true,
-      count:       rows.length,
-      instructors: rows,
-    });
-
-  } catch (err) {
-    console.error('[admin/instructors] list error:', err);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ━━━ DELETE /api/admin/instructors/:id ━━━━━━━━━━━━━━━━━━━━
-// Deletes the user (CASCADE removes instructors row automatically)
-router.delete('/:id', adminAuth, async (req, res) => {
-  const userId = parseInt(req.params.id);
-  if (isNaN(userId))
-    return res.status(400).json({ success: false, message: 'Invalid instructor id' });
-
-  try {
-    // Make sure the user is actually an instructor
-    const rows = await queryAsync(
-      'SELECT id FROM users WHERE id = ? AND role = ? LIMIT 1',
-      [userId, 'instructor']
-    );
-    if (!rows.length)
-      return res.status(404).json({ success: false, message: 'Instructor not found' });
-
-    // Delete from users — ON DELETE CASCADE removes instructors row
-    await queryAsync('DELETE FROM users WHERE id = ?', [userId]);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Instructor deleted successfully',
-    });
-
-  } catch (err) {
-    console.error('[admin/instructors] delete error:', err);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ━━━ Helper: promisify db.query ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function queryAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.query(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-}
-// ━━━ POST: add subject to validation + insert ━━━━━━━━━━━━
-
-router.post('/', adminAuth, async (req, res) => {
-  const { name, email, password, subject } = req.body; // ← add subject
-
-  if (!name || !name.trim())
-    return res.status(400).json({ success: false, message: 'Name is required' });
-  if (!email || !email.trim())
-    return res.status(400).json({ success: false, message: 'Email is required' });
-  if (!password || password.length < 6)
-    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
-  if (!subject || !subject.trim())                      // ← validate subject
-    return res.status(400).json({ success: false, message: 'Subject is required' });
-
-  try {
-    const existing = await queryAsync(
-      'SELECT id FROM users WHERE email = ? LIMIT 1', [email.trim()]
-    );
-    if (existing.length > 0)
-      return res.status(409).json({ success: false, message: 'Email already in use' });
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    const userResult = await queryAsync(
-      `INSERT INTO users (name, email, password, language, role)
-       VALUES (?, ?, ?, 'ar', 'instructor')`,
-      [name.trim(), email.trim(), hashed]
-    );
-    const userId = userResult.insertId;
-
-    await queryAsync(
-      'INSERT INTO instructors (user_id, subject) VALUES (?, ?)', // ← save subject
+      'INSERT INTO instructors (user_id, subject) VALUES (?, ?)',
       [userId, subject.trim()]
     );
 
     return res.status(201).json({
       success:    true,
       message:    'Instructor created successfully',
-      instructor: { id: userId, name: name.trim(), email: email.trim(), subject: subject.trim() },
+      instructor: {
+        id:      userId,
+        name:    name.trim(),
+        email:   email.trim(),
+        subject: subject.trim(),
+      },
     });
 
   } catch (err) {
@@ -194,8 +86,7 @@ router.post('/', adminAuth, async (req, res) => {
   }
 });
 
-// ━━━ GET: include subject in SELECT ━━━━━━━━━━━━━━━━━━━━━━
-
+// ━━━ GET /api/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/', adminAuth, async (req, res) => {
   try {
     const rows = await queryAsync(
@@ -205,16 +96,60 @@ router.get('/', adminAuth, async (req, res) => {
          u.email,
          u.created_at,
          i.id      AS instructor_id,
-         i.subject                    -- ← add this
+         i.subject
        FROM instructors i
        INNER JOIN users u ON u.id = i.user_id
        ORDER BY u.created_at DESC`
+      // ✅ FIX 3: أضفنا الفاصلة بين i.id AS instructor_id وi.subject
     );
-    return res.status(200).json({ success: true, count: rows.length, instructors: rows });
+
+    return res.status(200).json({
+      success:     true,
+      count:       rows.length,
+      instructors: rows,
+    });
+
   } catch (err) {
     console.error('[instructors] list error:', err);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+// ━━━ DELETE /api/instructors/:id ━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.delete('/:id', adminAuth, async (req, res) => {
+  const userId = parseInt(req.params.id);
+  if (isNaN(userId))
+    return res.status(400).json({ success: false, message: 'Invalid instructor id' });
+
+  try {
+    const rows = await queryAsync(
+      'SELECT id FROM users WHERE id = ? AND role = ? LIMIT 1',
+      [userId, 'teacher']
+    );
+    if (!rows.length)
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+
+    await queryAsync('DELETE FROM users WHERE id = ?', [userId]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Teacher deleted successfully',
+    });
+
+  } catch (err) {
+    console.error('[instructors] delete error:', err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ━━━ Helper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function queryAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.query(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
 
 module.exports = router;
