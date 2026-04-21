@@ -17,7 +17,7 @@ const resultRoutes        = require('./routes/resultRoute');
 const courseRoutes        = require('./routes/courses');
 const studentCourseRoutes = require('./routes/studentCourse');
 const notificationRoutes = require('./routes/notifications');
-const instructorRoutes = require('./routes/admin/instructors');
+const instructorRoutes = require('./routes/instructors');
 const chatbotRoutes = require('./routes/chatbot');
 
 
@@ -30,7 +30,7 @@ app.use('/api/result',          resultRoutes);
 app.use('/api/courses',         courseRoutes);
 app.use('/api/student/courses', studentCourseRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/admin/instructors', instructorRoutes);
+app.use('/api/instructors', instructorRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 
 
