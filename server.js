@@ -17,13 +17,7 @@ const studentCourseRoutes = require('./routes/studentCourse');
 const notificationRoutes  = require('./routes/notifications');
 const instructorRoutes    = require('./routes/instructors');
 const chatbotRoutes       = require('./routes/chatbot');
-const notificationRoutes = require('./routes/notifications');
-const studentlistRoutes = require('./routes/studentlist');
-
-const instructorRoutes = require('./routes/instructors');
-const chatbotRoutes = require('./routes/chatbot');
-
-
+const studentlistRoutes   = require('./routes/studentlist');
 
 app.use('/api/auth',            authRoutes);
 app.use('/api',                 levelRoutes);
@@ -35,11 +29,7 @@ app.use('/api/student/courses', studentCourseRoutes);
 app.use('/api/notifications',   notificationRoutes);
 app.use('/api/instructors',     instructorRoutes);
 app.use('/api/chatbot',         chatbotRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/studentlist', studentlistRoutes);
-app.use('/api/instructors', instructorRoutes);
-app.use('/api/chatbot', chatbotRoutes);
-
+app.use('/api/studentlist',     studentlistRoutes);
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
