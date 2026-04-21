@@ -484,52 +484,66 @@ router.put('/:id/progress', auth, (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid course id' });
 
   db.query(
-    'SELECT video_progress, pdf_opened, quiz_completed FROM enrollments WHERE student_id = ? AND course_id = ?',
+    `SELECT video_progress, pdf_opened, quiz_completed, video_position, pdf_page
+     FROM enrollments WHERE student_id = ? AND course_id = ?`,
     [req.userId, courseId],
     (err, rows) => {
-      if (err) {
-        console.error('[progress] fetch error:', err);
-        return res.status(500).json({ success: false, message: 'Database error' });
-      }
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
       if (!rows.length)
         return res.status(404).json({ success: false, message: 'Not enrolled in this course' });
 
-      const current = rows[0];
+      const cur = rows[0];
 
+      // ── Only overwrite fields that were actually sent ──
       const videoProgress = req.body.video_progress !== undefined
         ? Math.min(1, Math.max(0, parseFloat(req.body.video_progress)))
-        : current.video_progress;
+        : cur.video_progress;
 
       const pdfOpened = req.body.pdf_opened !== undefined
         ? (req.body.pdf_opened ? 1 : 0)
-        : current.pdf_opened;
+        : cur.pdf_opened;
 
       const quizCompleted = req.body.quiz_completed !== undefined
         ? (req.body.quiz_completed ? 1 : 0)
-        : current.quiz_completed;
+        : cur.quiz_completed;
 
-      const totalProgress = (videoProgress * 0.6) + (pdfOpened * 0.2) + (quizCompleted * 0.2);
+      // ── NEW: resume fields ──
+      const videoPosition = req.body.video_position !== undefined
+        ? Math.max(0, parseInt(req.body.video_position) || 0)
+        : cur.video_position;
+
+      const pdfPage = req.body.pdf_page !== undefined
+        ? Math.max(1, parseInt(req.body.pdf_page) || 1)
+        : cur.pdf_page;
+
+      const totalProgress =
+        (videoProgress * 0.6) + (pdfOpened * 0.2) + (quizCompleted * 0.2);
 
       db.query(
         `UPDATE enrollments
          SET video_progress  = ?,
              pdf_opened      = ?,
              quiz_completed  = ?,
-             progress        = ?
+             progress        = ?,
+             video_position  = ?,
+             pdf_page        = ?
          WHERE student_id = ? AND course_id = ?`,
-        [videoProgress, pdfOpened, quizCompleted,
-         parseFloat(totalProgress.toFixed(4)), req.userId, courseId],
+        [
+          videoProgress, pdfOpened, quizCompleted,
+          parseFloat(totalProgress.toFixed(4)),
+          videoPosition, pdfPage,
+          req.userId, courseId,
+        ],
         (err2) => {
-          if (err2) {
-            console.error('[progress] update error:', err2);
-            return res.status(500).json({ success: false, message: 'Database error' });
-          }
+          if (err2) return res.status(500).json({ success: false, message: 'Database error' });
           return res.status(200).json({
             success:        true,
             progress:       parseFloat(totalProgress.toFixed(2)),
             video_progress: videoProgress,
-            pdf_opened:     pdfOpened     === 1,
-            quiz_completed: quizCompleted === 1,
+            pdf_opened:     pdfOpened      === 1,
+            quiz_completed: quizCompleted  === 1,
+            video_position: videoPosition,
+            pdf_page:       pdfPage,
           });
         }
       );
@@ -854,6 +868,38 @@ router.get('/:courseId/quiz/history', auth, (req, res) => {
           ...r,
           passed: r.passed === 1,
         })),
+      });
+    }
+  );
+});
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/student/courses/:id/progress
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/:id/progress', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId))
+    return res.status(400).json({ success: false, message: 'Invalid course id' });
+
+  db.query(
+    `SELECT video_progress, pdf_opened, quiz_completed, progress,
+            video_position, pdf_page
+     FROM enrollments
+     WHERE student_id = ? AND course_id = ?`,
+    [req.userId, courseId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      if (!rows.length)
+        return res.status(404).json({ success: false, message: 'Not enrolled' });
+
+      const r = rows[0];
+      return res.status(200).json({
+        success:        true,
+        video_progress: parseFloat((r.video_progress * 100).toFixed(1)), // 0–100
+        pdf_opened:     r.pdf_opened     === 1,
+        quiz_completed: r.quiz_completed === 1,
+        progress:       Math.round(r.progress * 100),                    // 0–100
+        video_position: r.video_position || 0,   // seconds
+        pdf_page:       r.pdf_page       || 1,   // page number
       });
     }
   );
