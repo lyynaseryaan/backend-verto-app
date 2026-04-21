@@ -58,7 +58,7 @@ router.post('/', adminAuth, async (req, res) => {
     // ── Insert into users ─────────────────────────────
     const userResult = await queryAsync(
       `INSERT INTO users (name, email, password, language, role)
-       VALUES (?, ?, ?, 'ar', 'instructor')`,
+       VALUES (?, ?, ?, 'ar', 'teacher')`,
       [name.trim(), email.trim(), hashed]
     );
     const userId = userResult.insertId;
@@ -124,7 +124,7 @@ router.delete('/:id', adminAuth, async (req, res) => {
   try {
     const rows = await queryAsync(
       'SELECT id FROM users WHERE id = ? AND role = ? LIMIT 1',
-      [userId, 'instructor']
+      [userId, 'teacher']
     );
     if (!rows.length)
       return res.status(404).json({ success: false, message: 'Instructor not found' });
