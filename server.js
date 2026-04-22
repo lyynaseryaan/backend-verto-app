@@ -6,8 +6,6 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-// ✅ حذفنا: app.use('/uploads', express.static('uploads'));
-// مش محتاجينه — الملفات على Cloudinary مباشرة
 
 const authRoutes          = require('./routes/auth');
 const levelRoutes         = require('./routes/level');
@@ -18,10 +16,10 @@ const courseRoutes        = require('./routes/courses');
 const studentCourseRoutes = require('./routes/studentCourse');
 const notificationRoutes = require('./routes/notifications');
 const studentlistRoutes = require('./routes/studentlist');
-const adminProfileRoutes  = require('./routes/adminprofile');
-const instructorRoutes = require('./routes/instructors');
-const chatbotRoutes = require('./routes/chatbot');
 
+const activityFeedRoutes = require('./routes/activityFeed');
+const instructorRoutes    = require('./routes/instructors');
+const chatbotRoutes       = require('./routes/chatbot');
 
 
 app.use('/api/auth',            authRoutes);
@@ -37,9 +35,12 @@ app.use('/api/instructors', instructorRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/admin',  adminProfileRoutes);
 
+
+app.use('/api/activity-feed', activityFeedRoutes);
+app.use('/api/instructors',     instructorRoutes);
+app.use('/api/chatbot',         chatbotRoutes);
+
+
 app.listen(process.env.PORT, () => {
-  // ✅ تصحيح: كان template literal ما يشتغل مع single quotes
   console.log(`Server running on port ${process.env.PORT}`);
 });
-
-
