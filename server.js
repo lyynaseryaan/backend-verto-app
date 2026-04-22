@@ -16,7 +16,7 @@ const courseRoutes        = require('./routes/courses');
 const studentCourseRoutes = require('./routes/studentCourse');
 const notificationRoutes = require('./routes/notifications');
 const studentlistRoutes = require('./routes/studentlist');
-
+const adminProfileRoutes = require('./routes/adminprofile')
 const activityFeedRoutes = require('./routes/activityFeed');
 const instructorRoutes    = require('./routes/instructors');
 const chatbotRoutes       = require('./routes/chatbot');
