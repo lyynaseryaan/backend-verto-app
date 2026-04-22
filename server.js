@@ -21,7 +21,7 @@ const studentlistRoutes = require('./routes/studentlist');
 const activityFeedRoutes = require('./routes/activityFeed');
 const instructorRoutes    = require('./routes/instructors');
 const chatbotRoutes       = require('./routes/chatbot');
-
+const adminCoursesRoutes = require('./routes/adminCourses');
 
 app.use('/api/auth',            authRoutes);
 app.use('/api',                 levelRoutes);
@@ -37,7 +37,7 @@ app.use('/api/studentlist', studentlistRoutes);
 app.use('/api/activity-feed', activityFeedRoutes);
 app.use('/api/instructors',     instructorRoutes);
 app.use('/api/chatbot',         chatbotRoutes);
-
+app.use('/api/courses', adminCoursesRoutes);
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
