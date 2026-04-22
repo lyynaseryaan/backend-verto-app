@@ -19,9 +19,6 @@ const studentlistRoutes = require('./routes/studentlist');
 const instructorRoutes = require('./routes/instructors');
 const chatbotRoutes = require('./routes/chatbot');
 const activityFeedRoutes = require('./routes/activityFeed');
-
-
-const notificationRoutes  = require('./routes/notifications');
 const instructorRoutes    = require('./routes/instructors');
 const chatbotRoutes       = require('./routes/chatbot');
 const studentlistRoutes   = require('./routes/studentlist');
@@ -38,8 +35,6 @@ app.use('/api/studentlist', studentlistRoutes);
 app.use('/api/instructors', instructorRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/activity-feed', activityFeedRoutes);
-
-app.use('/api/notifications',   notificationRoutes);
 app.use('/api/instructors',     instructorRoutes);
 app.use('/api/chatbot',         chatbotRoutes);
 app.use('/api/studentlist',     studentlistRoutes);
