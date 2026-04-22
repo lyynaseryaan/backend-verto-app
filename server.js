@@ -39,7 +39,7 @@ app.use('/api/admin',  adminProfileRoutes);
 app.use('/api/activity-feed', activityFeedRoutes);
 app.use('/api/instructors',     instructorRoutes);
 app.use('/api/chatbot',         chatbotRoutes);
-app.use('/api/courses', adminCoursesRoutes);
+app.use('/api/courses/overview', adminCoursesRoutes);
 
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port ${process.env.PORT}`);
