@@ -64,9 +64,11 @@ router.get('/profile', adminOnly, (req, res) => {
 
           const totalUsers = parseInt(userRows[0].totalUsers) || 0;
 
-          // 3. Fetch total courses count
+          // 3. Fetch total courses count + teacher/student breakdown
           db.query(
-            'SELECT COUNT(*) AS totalCourses FROM courses',
+            `SELECT
+               COUNT(*) AS totalCourses
+             FROM courses`,
             (err3, courseRows) => {
               if (err3) {
                 console.error('Error fetching course count:', err3);
@@ -75,21 +77,37 @@ router.get('/profile', adminOnly, (req, res) => {
 
               const totalCourses = parseInt(courseRows[0].totalCourses) || 0;
 
-              return res.status(200).json({
-                success: true,
-                admin: {
-                  id:        admin.id,
-                  name:      admin.name,
-                  email:     admin.email,
-                  language:  admin.language || 'en',
-                  createdAt: admin.created_at,
-                },
-                stats: {
-                  totalUsers:   totalUsers,
-                  totalCourses: totalCourses,
-                  uptime:       97, // static percentage
-                },
-              });
+              // 4. Fetch teacher/student breakdown for AdminHome
+              db.query(
+                `SELECT
+                   SUM(role = 'teacher') AS teacherCount,
+                   SUM(role = 'student') AS studentCount
+                 FROM users`,
+                (err4, roleRows) => {
+                  if (err4) {
+                    console.error('Error fetching role counts:', err4);
+                    return res.status(500).json({ success: false, error: 'Database error' });
+                  }
+
+                  return res.status(200).json({
+                    success: true,
+                    admin: {
+                      id:        admin.id,
+                      name:      admin.name,
+                      email:     admin.email,
+                      language:  admin.language || 'en',
+                      createdAt: admin.created_at,
+                    },
+                    stats: {
+                      totalUsers:   totalUsers,
+                      totalCourses: totalCourses,
+                      teachers:     parseInt(roleRows[0].teacherCount)  || 0,
+                      students:     parseInt(roleRows[0].studentCount)  || 0,
+                      uptime:       97,
+                    },
+                  });
+                }
+              );
             }
           );
         }
