@@ -32,7 +32,7 @@ function adminOnly(req, res, next) {
 
 // ─────────────────────────────────────────
 // GET /api/admin/profile
-// Returns: admin info + dynamic stats (teacher count, student count)
+// Returns: admin info + stats (totalUsers, totalCourses, uptime)
 // ─────────────────────────────────────────
 router.get('/profile', adminOnly, (req, res) => {
   const adminId = req.user.id;
@@ -53,36 +53,45 @@ router.get('/profile', adminOnly, (req, res) => {
 
       const admin = adminRows[0];
 
-      // 2. Fetch dynamic stats from users table
+      // 2. Fetch total users count
       db.query(
-        `SELECT
-           SUM(role = 'teacher') AS teacherCount,
-           SUM(role = 'student') AS studentCount,
-           COUNT(*) AS totalUsers
-         FROM users`,
-        (err2, statsRows) => {
+        'SELECT COUNT(*) AS totalUsers FROM users',
+        (err2, userRows) => {
           if (err2) {
-            console.error('Error fetching stats:', err2);
+            console.error('Error fetching user count:', err2);
             return res.status(500).json({ success: false, error: 'Database error' });
           }
 
-          const stats = statsRows[0];
+          const totalUsers = parseInt(userRows[0].totalUsers) || 0;
 
-          return res.status(200).json({
-            success: true,
-            admin: {
-              id:        admin.id,
-              name:      admin.name,
-              email:     admin.email,
-              language:  admin.language || 'en',
-              createdAt: admin.created_at,
-            },
-            stats: {
-              teachers:   parseInt(stats.teacherCount)  || 0,
-              students:   parseInt(stats.studentCount)  || 0,
-              totalUsers: parseInt(stats.totalUsers)    || 0,
-            },
-          });
+          // 3. Fetch total courses count
+          db.query(
+            'SELECT COUNT(*) AS totalCourses FROM courses',
+            (err3, courseRows) => {
+              if (err3) {
+                console.error('Error fetching course count:', err3);
+                return res.status(500).json({ success: false, error: 'Database error' });
+              }
+
+              const totalCourses = parseInt(courseRows[0].totalCourses) || 0;
+
+              return res.status(200).json({
+                success: true,
+                admin: {
+                  id:        admin.id,
+                  name:      admin.name,
+                  email:     admin.email,
+                  language:  admin.language || 'en',
+                  createdAt: admin.created_at,
+                },
+                stats: {
+                  totalUsers:   totalUsers,
+                  totalCourses: totalCourses,
+                  uptime:       97, // static percentage
+                },
+              });
+            }
+          );
         }
       );
     }
