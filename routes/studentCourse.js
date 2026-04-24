@@ -50,8 +50,8 @@ async function getAIExplanation(level, correct, total, wrongQuestions) {
     return {
       explanations:    [],
       nextStep:        'proceed',
-      nextStepMessage: 'ممتاز! أجبت على كل الأسئلة بشكل صحيح 🎯',
-      coachMessage:    'أداؤك رائع، أنت جاهز للدرس التالي! 🚀',
+      nextStepMessage: 'ممتاز! أجبت على كل الأسئلة بشكل صحيح ',
+      coachMessage:    'أداؤك رائع، أنت جاهز للدرس التالي! ',
     };
   }
 
@@ -481,7 +481,7 @@ router.post('/:courseId/quiz/submit', auth, (req, res) => {
               }
             }
 
-            // 🤖 AI
+            // AI
             let ai = { explanations: [], nextStep: 'proceed', nextStepMessage: '', coachMessage: '' };
             try {
               ai = await getAIExplanation(level, correctCount, total, wrongQuestions);
