@@ -198,7 +198,7 @@ router.get('/admin/:id', adminAuth, async (req, res) => {
 
     // Build CV URL if file exists
     if (request.cv_file) {
-      request.cv_url = `${process.env.BASE_URL || ''}/uploads/cvs/${request.cv_file}`;
+      request.cv_url = `${process.env.BASE_URL || ''}/api/instructor-requests/cv/${request.cv_file}`;
     }
 
     return res.status(200).json({ success: true, request });
