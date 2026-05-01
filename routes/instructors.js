@@ -29,7 +29,6 @@ function adminAuth(req, res, next) {
 }
 
 // ━━━ POST /api/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ✅ FIX 2: route واحدة فقط — دمجنا الـ subject مع التحقق الأول
 router.post('/', adminAuth, async (req, res) => {
   const { name, email, password, subject } = req.body;
 
