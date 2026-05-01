@@ -3,22 +3,22 @@
 
 const express = require('express');
 const router = express.Router();
-const db = require('../config/db'); // استخدمي مسار قاعدة البيانات الموجود
-const authenticateToken = require('../middleware/auth'); // middleware الـ JWT الموجود
+const db = require('../db'); // استخدمي مسار قاعدة البيانات الموجود
+const { verifyToken } = require('../middleware/auth'); // middleware الـ JWT الموجود
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // GET /api/profile
 // يرجع: معلومات المستخدم + الإحصائيات
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
     const userId = req.user.id; // من الـ JWT payload
 
     // ── 1. معلومات المستخدم الأساسية ──
     const [userRows] = await db.promise().query(
-      `SELECT id, name, email, role, specialization
-       FROM users
-       WHERE id = ?`,
+      `SELECT id, name, email, role, selected_level
+        FROM users
+        WHERE id = ?`
       [userId]
     );
 
@@ -59,7 +59,7 @@ router.get('/', authenticateToken, async (req, res) => {
         full_name: user.name,
         email: user.email,
         role: user.role,
-        specialization: user.specialization || 'Student',
+        specialization: user.selected_level || 'Student',
       },
       stats: {
         courses: enrolledRows[0].total_courses,
