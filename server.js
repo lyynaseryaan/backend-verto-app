@@ -26,7 +26,7 @@ const activityFeedRoutes  = require('./routes/activityFeed');
 const instructorRoutes    = require('./routes/instructors');   // approved instructors
 const chatbotRoutes       = require('./routes/chatbot');
 const adminCoursesRoutes  = require('./routes/adminCourses');
-const profileRoute = require('./routes/profile');
+const profileRoute        = require('./routes/profile');
 
 app.use('/api/auth',             authRoutes);
 app.use('/api',                  levelRoutes);
@@ -42,7 +42,7 @@ app.use('/api/activity-feed',    activityFeedRoutes);
 app.use('/api/instructors',      instructorRoutes);
 app.use('/api/chatbot',          chatbotRoutes);
 app.use('/api/admin-courses', adminCoursesRoutes);
-app.use('/api/profile', profileRoute);
+app.use('/api/profile', require('./routes/profile'));
 // ── NEW route ─────────────────────────────────────────────────────
 const instructorRequestsRoutes = require('./routes/instructorRequests');
 
