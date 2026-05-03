@@ -1,14 +1,13 @@
 // ============================================================
 //  routes/instructors.js  –  Verto LMS
-//  ✅ FIX 1: require('../db') صحيح — الملف في routes/ مباشرة
-//  ✅ FIX 2: router.post('/') مرة واحدة فقط — حذفنا المكررة
-//  ✅ FIX 3: فاصلة ناقصة في SQL بين i.id وi.subject
+//  ⚠️  Admin can NO LONGER create instructors manually.
+//      All instructors must come from approved applications.
+//      This file now only exposes GET (list) and DELETE.
 // ============================================================
 
 const express = require('express');
 const router  = express.Router();
-const db      = require('../db');        // ✅ FIX 1: كان ../../db — صح الآن
-const bcrypt  = require('bcryptjs');
+const db      = require('../db');
 const jwt     = require('jsonwebtoken');
 
 // ━━━ Admin-only middleware ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -28,64 +27,17 @@ function adminAuth(req, res, next) {
   });
 }
 
-// ━━━ POST /api/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.post('/', adminAuth, async (req, res) => {
-  const { name, email, password, subject } = req.body;
-
-  // ── Validate ──────────────────────────────────────────
-  if (!name || !name.trim())
-    return res.status(400).json({ success: false, message: 'Name is required' });
-  if (!email || !email.trim())
-    return res.status(400).json({ success: false, message: 'Email is required' });
-  if (!password || password.length < 6)
-    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
-  if (!subject || !subject.trim())
-    return res.status(400).json({ success: false, message: 'Subject is required' });
-
-  try {
-    // ── Check email duplicate ─────────────────────────
-    const existing = await queryAsync(
-      'SELECT id FROM users WHERE email = ? LIMIT 1',
-      [email.trim()]
-    );
-    if (existing.length > 0)
-      return res.status(409).json({ success: false, message: 'Email already in use' });
-
-    // ── Hash password ─────────────────────────────────
-    const hashed = await bcrypt.hash(password, 10);
-
-    // ── Insert into users ─────────────────────────────
-    const userResult = await queryAsync(
-      `INSERT INTO users (name, email, password, language, role)
-       VALUES (?, ?, ?, 'ar', 'teacher')`,
-      [name.trim(), email.trim(), hashed]
-    );
-    const userId = userResult.insertId;
-
-    // ── Insert into instructors ───────────────────────
-    await queryAsync(
-      'INSERT INTO instructors (user_id, subject) VALUES (?, ?)',
-      [userId, subject.trim()]
-    );
-
-    return res.status(201).json({
-      success:    true,
-      message:    'Instructor created successfully',
-      instructor: {
-        id:      userId,
-        name:    name.trim(),
-        email:   email.trim(),
-        subject: subject.trim(),
-      },
+// ━━━ Helper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function queryAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.query(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
     });
+  });
+}
 
-  } catch (err) {
-    console.error('[instructors] create error:', err);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
-
-// ━━━ GET /api/instructors ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ GET /api/instructors  –  list approved instructors ━━━
 router.get('/', adminAuth, async (req, res) => {
   try {
     const rows = await queryAsync(
@@ -99,7 +51,6 @@ router.get('/', adminAuth, async (req, res) => {
        FROM instructors i
        INNER JOIN users u ON u.id = i.user_id
        ORDER BY u.created_at DESC`
-      // ✅ FIX 3: أضفنا الفاصلة بين i.id AS instructor_id وi.subject
     );
 
     return res.status(200).json({
@@ -107,7 +58,6 @@ router.get('/', adminAuth, async (req, res) => {
       count:       rows.length,
       instructors: rows,
     });
-
   } catch (err) {
     console.error('[instructors] list error:', err);
     return res.status(500).json({ success: false, message: 'Server error' });
@@ -134,21 +84,20 @@ router.delete('/:id', adminAuth, async (req, res) => {
       success: true,
       message: 'Teacher deleted successfully',
     });
-
   } catch (err) {
     console.error('[instructors] delete error:', err);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// ━━━ Helper ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function queryAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.query(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
+// ━━━ Block manual instructor creation ━━━━━━━━━━━━━━━━━━━━━
+router.post('/', adminAuth, (req, res) => {
+  return res.status(403).json({
+    success: false,
+    message:
+      'Manual instructor creation is disabled. ' +
+      'Instructors must apply via the application form and be approved by an admin.',
   });
-}
+});
 
 module.exports = router;

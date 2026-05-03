@@ -280,6 +280,146 @@ router.delete('/:id', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  PUT /api/courses/:id/levels  —  UPDATE existing levels (EDIT MODE)
+//
+//  Each level in the payload MUST carry its { levelId } (the PK of
+//  course_levels). The route does a plain UPDATE by that ID — it never
+//  INSERTs a new row, so level count can never increase.
+//
+//  File fields: same naming as POST (videoFile_Beginner etc.)
+//  Quiz:        DELETE old questions for updated levels, INSERT new ones.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+router.put('/:id/levels', auth, (req, res) => {
+  uploadLevelFiles(req, res, (uploadErr) => {
+    if (uploadErr)
+      return res.status(400).json({ success: false, message: uploadErr.message });
+
+    // ── Parse levels payload ──────────────────────────────
+    let levels;
+    try {
+      levels = typeof req.body.levels === 'string'
+        ? JSON.parse(req.body.levels)
+        : req.body.levels;
+    } catch (_) {
+      return res.status(400).json({ success: false, message: 'levels must be a valid JSON array' });
+    }
+
+    if (!levels || !Array.isArray(levels) || !levels.length)
+      return res.status(400).json({ success: false, message: 'levels array is required' });
+
+    // Every level must carry its DB id so we can UPDATE in place
+    const missingId = levels.find(l => !l.levelId);
+    if (missingId)
+      return res.status(400).json({ success: false, message: 'Each level must include levelId for update' });
+
+    // ── Verify course ownership ───────────────────────────
+    db.query(
+      'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
+      [req.params.id, req.userId],
+      (err, rows) => {
+        if (err) return res.status(500).json({ success: false, message: 'Database error' });
+        if (!rows.length)
+          return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
+
+        const files = req.files || {};
+        let completed = 0;
+        const errors  = [];
+
+        // ── UPDATE each level row by its primary key ──────
+        levels.forEach(l => {
+          const lvl       = l.level;
+          const levelId   = l.levelId;
+          const newVideo  = fileUrl(files, `videoFile_${lvl}`);
+          const newPdfC   = fileUrl(files, `pdfCourseFile_${lvl}`);
+          const newPdfE   = fileUrl(files, `pdfExerciseFile_${lvl}`);
+
+          db.query(
+            `UPDATE course_levels
+             SET video_url       = ?,
+                 text_content    = ?,
+                 quiz_note       = NULL,
+                 video_file_path = COALESCE(?, video_file_path),
+                 pdf_course      = COALESCE(?, pdf_course),
+                 pdf_exercise    = COALESCE(?, pdf_exercise)
+             WHERE id = ? AND course_id = ?`,
+            [
+              l.videoUrl    || null,
+              l.textContent || null,
+              newVideo,
+              newPdfC,
+              newPdfE,
+              levelId,
+              req.params.id,
+            ],
+            (err2) => {
+              if (err2) errors.push(err2.message);
+              completed++;
+
+              // When all UPDATE queries are done, handle quiz questions
+              if (completed < levels.length) return;
+
+              if (errors.length)
+                return res.status(500).json({ success: false, message: errors[0] });
+
+              // ── Rebuild quiz questions for updated levels ─
+              const levelIds = levels.map(l => l.levelId);
+
+              // Collect new quiz rows
+              const quizRows = [];
+              levels.forEach(l => {
+                if (!Array.isArray(l.quiz_questions) || !l.quiz_questions.length) return;
+                l.quiz_questions.forEach(q => {
+                  quizRows.push([
+                    l.levelId,
+                    q.questionText,
+                    JSON.stringify(q.options),
+                    q.correctAnswerIndex,
+                  ]);
+                });
+              });
+
+              // Delete old questions for these level IDs
+              db.query(
+                'DELETE FROM quiz_questions WHERE course_level_id IN (?)',
+                [levelIds],
+                (err3) => {
+                  if (err3) console.warn('Delete old quiz_questions failed:', err3.message);
+
+                  if (!quizRows.length)
+                    return res.status(200).json({ success: true, message: 'Levels updated successfully' });
+
+                  db.query(
+                    `INSERT INTO quiz_questions
+                       (course_level_id, question_text, options, correct_answer_index)
+                     VALUES ?`,
+                    [quizRows],
+                    (err4) => {
+                      if (err4) {
+                        console.warn('Insert quiz_questions failed:', err4.message);
+                        return res.status(200).json({
+                          success: true,
+                          message: 'Levels updated. Quiz could not be saved.',
+                        });
+                      }
+                      res.status(200).json({
+                        success:            true,
+                        message:            'Levels and quiz questions updated successfully',
+                        quizQuestionsCount: quizRows.length,
+                      });
+                    }
+                  );
+                }
+              );
+            }
+          );
+        });
+      }
+    );
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses/:id/levels
 //
 //  Saves content for all 3 adaptive levels.
