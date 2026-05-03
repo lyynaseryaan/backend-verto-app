@@ -1,5 +1,6 @@
 // ============================================================
 //  routes/studentCourse.js  –  Verto LMS
+//  ✅ كل content logic محفوظ كما هو
 //  ✅ أضفنا quiz لكل lesson بدون مس باقي الكود
 //  🤖 AI: يشرح الأخطاء بعد كل كويز درس via Groq
 //
@@ -7,6 +8,7 @@
 //  ✅ GET /:id/progress    → يرجع 0–1 بدل 0–100 (تماشي مع السارفيس)
 //  ✅ PUT /:id/progress    → يقبل 0–1 مع normalization آمن + fallback صحيح
 //  ✅ quiz/submit          → progress يُحسب بشكل صحيح بدون double counting
+//  ✅ pdf_exercise_page    → عمود جديد لحفظ تقدم PDF التمارين منفصل
 // ============================================================
 
 const express = require('express');
@@ -339,13 +341,15 @@ router.post('/:id/enroll', auth, (req, res) => {
 //  PUT /api/student/courses/:id/progress
 //  🔧 FIX 1: يقبل video_progress كـ 0–1 من السارفيس مباشرة
 //  🔧 FIX 2: fallback من DB يُحوّل بشكل صحيح (tinyint → int)
+//  🔧 FIX 3: pdf_page و pdf_exercise_page منفصلين (يحافظ على كل واحد)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.put('/:id/progress', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
 
+  // ✅ FIX: أضفنا pdf_exercise_page في الـ SELECT
   db.query(
-    `SELECT video_progress, pdf_opened, quiz_completed, video_position, pdf_page
+    `SELECT video_progress, pdf_opened, quiz_completed, video_position, pdf_page, pdf_exercise_page
      FROM enrollments WHERE student_id = ? AND course_id = ?`,
     [req.userId, courseId],
     (err, rows) => {
@@ -355,52 +359,64 @@ router.put('/:id/progress', auth, (req, res) => {
       const cur = rows[0];
 
       // 🔧 FIX 1: السارفيس ترسل 0–1 — نقبلها مباشرة
-      // Math.min(1, ...) يحمي لو جاءت قيمة غلط
       let videoProgress;
       if (req.body.video_progress !== undefined) {
         let raw = parseFloat(req.body.video_progress);
         if (isNaN(raw)) raw = 0;
-        // normalization: لو > 1 معناه جاء من كود قديم بـ 0–100 → نحوّله
-        if (raw > 1) raw = raw / 100;
+        if (raw > 1) raw = raw / 100; // normalization من الكود القديم
         videoProgress = Math.min(1, Math.max(0, raw));
       } else {
         videoProgress = parseFloat(cur.video_progress) || 0;
       }
 
-      // 🔧 FIX 2: tinyint من MySQL قد يكون Buffer — نحوّل بـ !! بشكل صريح
-      const pdfOpened     = req.body.pdf_opened     !== undefined
-        ? (req.body.pdf_opened     ? 1 : 0)
-        : (cur.pdf_opened          ? 1 : 0);
+      // 🔧 FIX 2: tinyint → تحويل صريح
+      const pdfOpened = req.body.pdf_opened !== undefined
+        ? (req.body.pdf_opened ? 1 : 0)
+        : (cur.pdf_opened ? 1 : 0);
 
       const quizCompleted = req.body.quiz_completed !== undefined
         ? (req.body.quiz_completed ? 1 : 0)
-        : (cur.quiz_completed      ? 1 : 0);
+        : (cur.quiz_completed ? 1 : 0);
 
       const videoPosition = req.body.video_position !== undefined
         ? Math.max(0, parseInt(req.body.video_position) || 0)
         : (parseInt(cur.video_position) || 0);
 
+      // ✅ FIX 3: pdf_page = PDF الدرس — يحافظ على القديم إذا لم يُرسل
       const pdfPage = req.body.pdf_page !== undefined
         ? Math.max(1, parseInt(req.body.pdf_page) || 1)
         : (parseInt(cur.pdf_page) || 1);
 
-      // حساب progress من القيم النهائية — دايماً صحيح
+      // ✅ FIX 3: pdf_exercise_page = PDF التمارين — منفصل تماماً
+      const pdfExercisePage = req.body.pdf_exercise_page !== undefined
+        ? Math.max(1, parseInt(req.body.pdf_exercise_page) || 1)
+        : (parseInt(cur.pdf_exercise_page) || 1);
+
+      // حساب progress النهائي
       const totalProgress = (videoProgress * 0.6) + (pdfOpened * 0.2) + (quizCompleted * 0.2);
 
+      // ✅ FIX: أضفنا pdf_exercise_page في الـ UPDATE
       db.query(
-        `UPDATE enrollments SET video_progress=?, pdf_opened=?, quiz_completed=?, progress=?, video_position=?, pdf_page=?
+        `UPDATE enrollments 
+         SET video_progress=?, pdf_opened=?, quiz_completed=?, progress=?, 
+             video_position=?, pdf_page=?, pdf_exercise_page=?
          WHERE student_id=? AND course_id=?`,
-        [videoProgress, pdfOpened, quizCompleted, parseFloat(totalProgress.toFixed(4)), videoPosition, pdfPage, req.userId, courseId],
+        [
+          videoProgress, pdfOpened, quizCompleted, parseFloat(totalProgress.toFixed(4)),
+          videoPosition, pdfPage, pdfExercisePage,
+          req.userId, courseId
+        ],
         (err2) => {
           if (err2) return res.status(500).json({ success: false, message: 'Database error' });
           return res.status(200).json({
-            success:        true,
-            progress:       parseFloat(totalProgress.toFixed(4)),  // 0–1
-            video_progress: videoProgress,                          // 0–1
-            pdf_opened:     pdfOpened     === 1,
-            quiz_completed: quizCompleted === 1,
-            video_position: videoPosition,
-            pdf_page:       pdfPage,
+            success:           true,
+            progress:          parseFloat(totalProgress.toFixed(4)),
+            video_progress:    videoProgress,
+            pdf_opened:        pdfOpened === 1,
+            quiz_completed:    quizCompleted === 1,
+            video_position:    videoPosition,
+            pdf_page:          pdfPage,           // ✅ PDF الدرس
+            pdf_exercise_page: pdfExercisePage,   // ✅ PDF التمارين
           });
         }
       );
@@ -512,7 +528,6 @@ router.post('/:courseId/quiz/submit', auth, (req, res) => {
               );
 
               // 🔧 FIX 3: حساب progress صحيح بدون double counting
-              // بدل LEAST(1, progress + 0.2) → نجيب القيم الحالية ونحسب من جديد
               if (passed) {
                 db.query(
                   `SELECT video_progress, pdf_opened, quiz_completed FROM enrollments WHERE student_id = ? AND course_id = ?`,
@@ -523,7 +538,6 @@ router.post('/:courseId/quiz/submit', auth, (req, res) => {
                     if (fetchRows[0].quiz_completed) return;
                     const vp  = parseFloat(fetchRows[0].video_progress) || 0;
                     const pdf = fetchRows[0].pdf_opened ? 1 : 0;
-                    // quiz_completed = 1 الآن
                     const newProgress = Math.min(1, parseFloat(((vp * 0.6) + (pdf * 0.2) + 0.2).toFixed(4)));
                     db.query(
                       `UPDATE enrollments SET quiz_completed = 1, progress = ? WHERE student_id = ? AND course_id = ?`,
@@ -573,43 +587,43 @@ router.get('/:courseId/quiz/history', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:id/progress
-//  🔧 FIX: يرجع 0–1 بدل 0–100 — تماشي مع السارفيس الجديدة
+//  🔧 FIX: يرجع 0–1 بدل 0–100 + pdf_exercise_page منفصل
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id/progress', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
 
+  // ✅ FIX: أضفنا pdf_exercise_page في الـ SELECT
   db.query(
-    `SELECT video_progress, pdf_opened, quiz_completed, progress, video_position, pdf_page
+    `SELECT video_progress, pdf_opened, quiz_completed, progress, video_position, pdf_page, pdf_exercise_page
      FROM enrollments WHERE student_id = ? AND course_id = ?`,
     [req.userId, courseId],
     (err, rows) => {
       if (err) return res.status(500).json({ success: false, message: 'Database error' });
 
-      // لو ما في enrollment — ارجع أصفار بدل 404 (يمنع crash في Flutter)
       if (!rows.length) {
         return res.status(200).json({
-          success: true,
-          video_progress: 0,      // 0–1 ✅
-          pdf_opened:     false,
-          quiz_completed: false,
-          progress:       0,      // 0–1 ✅
-          video_position: 0,
-          pdf_page:       1,
+          success:           true,
+          video_progress:    0,
+          pdf_opened:        false,
+          quiz_completed:    false,
+          progress:          0,
+          video_position:    0,
+          pdf_page:          1,    // PDF الدرس
+          pdf_exercise_page: 1,    // ✅ PDF التمارين
         });
       }
 
       const r = rows[0];
       return res.status(200).json({
-        success:        true,
-        // 🔧 FIX: كان video_progress * 100 → أزلنا الضرب
-        video_progress: parseFloat((r.video_progress || 0).toFixed(4)),  // 0–1 ✅
-        pdf_opened:     r.pdf_opened     ? true : false,
-        quiz_completed: r.quiz_completed ? true : false,
-        // 🔧 FIX: كان Math.round(r.progress * 100) → أزلنا الضرب
-        progress:       parseFloat((r.progress || 0).toFixed(4)),        // 0–1 ✅
-        video_position: r.video_position || 0,
-        pdf_page:       r.pdf_page       || 1,
+        success:           true,
+        video_progress:    parseFloat((r.video_progress || 0).toFixed(4)),
+        pdf_opened:        r.pdf_opened     ? true : false,
+        quiz_completed:    r.quiz_completed ? true : false,
+        progress:          parseFloat((r.progress || 0).toFixed(4)),
+        video_position:    r.video_position || 0,
+        pdf_page:          r.pdf_page          || 1,    // ✅ PDF الدرس
+        pdf_exercise_page: r.pdf_exercise_page || 1,    // ✅ PDF التمارين
       });
     }
   );
