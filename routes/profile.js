@@ -64,7 +64,7 @@ router.get('/', studentAuth, (req, res) => {
 
           // 3. عدد الكورسات المكتملة
           db.query(
-            'SELECT COUNT(*) AS completed_courses FROM enrollments WHERE student_id = ? AND progress = 100',
+            'SELECT COUNT(*) AS completed_courses FROM enrollments WHERE student_id = ? AND progress = 1',
             [userId],
             (err3, completedRows) => {
               if (err3) {
