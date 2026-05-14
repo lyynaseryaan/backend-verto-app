@@ -1,20 +1,12 @@
 // ============================================================
 //  routes/studentCourse.js  –  Verto LMS
-//  ✅ كل content logic محفوظ كما هو
-//  ✅ أضفنا quiz لكل lesson بدون مس باقي الكود
-//  🤖 AI: يشرح الأخطاء بعد كل كويز درس via Groq
-//
-//  🔧 PROGRESS FIXES (3 routes فقط — باقي الكود لم يُمس):
-//  ✅ GET /:id/progress    → يرجع 0–1 بدل 0–100 (تماشي مع السارفيس)
-//  ✅ PUT /:id/progress    → يقبل 0–1 مع normalization آمن + fallback صحيح
-//  ✅ quiz/submit          → progress يُحسب بشكل صحيح بدون double counting
-//  ✅ pdf_exercise_page    → عمود جديد لحفظ تقدم PDF التمارين منفصل
 // ============================================================
 
 const express = require('express');
 const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
+const NotificationService = require('../services/notificationService');
 
 // ━━━ AUTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function auth(req, res, next) {
@@ -339,15 +331,11 @@ router.post('/:id/enroll', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  PUT /api/student/courses/:id/progress
-//  🔧 FIX 1: يقبل video_progress كـ 0–1 من السارفيس مباشرة
-//  🔧 FIX 2: fallback من DB يُحوّل بشكل صحيح (tinyint → int)
-//  🔧 FIX 3: pdf_page و pdf_exercise_page منفصلين (يحافظ على كل واحد)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.put('/:id/progress', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
 
-  // ✅ FIX: أضفنا pdf_exercise_page في الـ SELECT
   db.query(
     `SELECT video_progress, pdf_opened, quiz_completed, video_position, pdf_page, pdf_exercise_page
      FROM enrollments WHERE student_id = ? AND course_id = ?`,
@@ -358,18 +346,16 @@ router.put('/:id/progress', auth, (req, res) => {
 
       const cur = rows[0];
 
-      // 🔧 FIX 1: السارفيس ترسل 0–1 — نقبلها مباشرة
       let videoProgress;
       if (req.body.video_progress !== undefined) {
         let raw = parseFloat(req.body.video_progress);
         if (isNaN(raw)) raw = 0;
-        if (raw > 1) raw = raw / 100; // normalization من الكود القديم
+        if (raw > 1) raw = raw / 100;
         videoProgress = Math.min(1, Math.max(0, raw));
       } else {
         videoProgress = parseFloat(cur.video_progress) || 0;
       }
 
-      // 🔧 FIX 2: tinyint → تحويل صريح
       const pdfOpened = req.body.pdf_opened !== undefined
         ? (req.body.pdf_opened ? 1 : 0)
         : (cur.pdf_opened ? 1 : 0);
@@ -382,20 +368,16 @@ router.put('/:id/progress', auth, (req, res) => {
         ? Math.max(0, parseInt(req.body.video_position) || 0)
         : (parseInt(cur.video_position) || 0);
 
-      // ✅ FIX 3: pdf_page = PDF الدرس — يحافظ على القديم إذا لم يُرسل
       const pdfPage = req.body.pdf_page !== undefined
         ? Math.max(1, parseInt(req.body.pdf_page) || 1)
         : (parseInt(cur.pdf_page) || 1);
 
-      // ✅ FIX 3: pdf_exercise_page = PDF التمارين — منفصل تماماً
       const pdfExercisePage = req.body.pdf_exercise_page !== undefined
         ? Math.max(1, parseInt(req.body.pdf_exercise_page) || 1)
         : (parseInt(cur.pdf_exercise_page) || 1);
 
-      // حساب progress النهائي
       const totalProgress = (videoProgress * 0.6) + (pdfOpened * 0.2) + (quizCompleted * 0.2);
 
-      // ✅ FIX: أضفنا pdf_exercise_page في الـ UPDATE
       db.query(
         `UPDATE enrollments 
          SET video_progress=?, pdf_opened=?, quiz_completed=?, progress=?, 
@@ -415,8 +397,8 @@ router.put('/:id/progress', auth, (req, res) => {
             pdf_opened:        pdfOpened === 1,
             quiz_completed:    quizCompleted === 1,
             video_position:    videoPosition,
-            pdf_page:          pdfPage,           // ✅ PDF الدرس
-            pdf_exercise_page: pdfExercisePage,   // ✅ PDF التمارين
+            pdf_page:          pdfPage,
+            pdf_exercise_page: pdfExercisePage,
           });
         }
       );
@@ -457,10 +439,10 @@ router.get('/:courseId/quiz', auth, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/student/courses/:courseId/quiz/submit
 //  🤖 AI explanation after grading
-//  🔧 FIX 3: progress يُحسب بشكل صحيح — لا double counting
+//  🔔 Notification after submit
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:courseId/quiz/submit', auth, (req, res) => {
-  const courseId       = parseInt(req.params.courseId);
+  const courseId           = parseInt(req.params.courseId);
   const { level, answers } = req.body;
 
   if (isNaN(courseId))    return res.status(400).json({ success: false, message: 'Invalid course id' });
@@ -527,14 +509,12 @@ router.post('/:courseId/quiz/submit', auth, (req, res) => {
                 (err4) => { if (err4) console.warn('[quiz/submit] answers warning:', err4.message); }
               );
 
-              // 🔧 FIX 3: حساب progress صحيح بدون double counting
               if (passed) {
                 db.query(
                   `SELECT video_progress, pdf_opened, quiz_completed FROM enrollments WHERE student_id = ? AND course_id = ?`,
                   [req.userId, courseId],
                   (errFetch, fetchRows) => {
                     if (errFetch || !fetchRows.length) return;
-                    // لو quiz_completed موجود مسبقاً — لا نعيد الحساب (يمنع double counting)
                     if (fetchRows[0].quiz_completed) return;
                     const vp  = parseFloat(fetchRows[0].video_progress) || 0;
                     const pdf = fetchRows[0].pdf_opened ? 1 : 0;
@@ -548,6 +528,17 @@ router.post('/:courseId/quiz/submit', auth, (req, res) => {
                 );
               }
             }
+
+            // ── Send quiz_result notification ──────────────────
+            db.query('SELECT title FROM courses WHERE id = ?', [courseId], (errC, courseRows) => {
+              const courseTitle = (courseRows && courseRows.length) ? courseRows[0].title : 'Quiz';
+              NotificationService.create(
+                req.userId,
+                'quiz_result',
+                passed ? 'Quiz Passed! 🎉' : 'Quiz Completed',
+                `You scored ${percentage}% (${correctCount}/${total}) on "${courseTitle}"`
+              ).catch(e => console.warn('[quiz/submit] notification error:', e.message));
+            });
 
             let ai = { explanations: [], nextStep: 'proceed', nextStepMessage: '', coachMessage: '' };
             try {
@@ -587,13 +578,11 @@ router.get('/:courseId/quiz/history', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:id/progress
-//  🔧 FIX: يرجع 0–1 بدل 0–100 + pdf_exercise_page منفصل
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id/progress', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
 
-  // ✅ FIX: أضفنا pdf_exercise_page في الـ SELECT
   db.query(
     `SELECT video_progress, pdf_opened, quiz_completed, progress, video_position, pdf_page, pdf_exercise_page
      FROM enrollments WHERE student_id = ? AND course_id = ?`,
@@ -609,8 +598,8 @@ router.get('/:id/progress', auth, (req, res) => {
           quiz_completed:    false,
           progress:          0,
           video_position:    0,
-          pdf_page:          1,    // PDF الدرس
-          pdf_exercise_page: 1,    // ✅ PDF التمارين
+          pdf_page:          1,
+          pdf_exercise_page: 1,
         });
       }
 
@@ -622,8 +611,8 @@ router.get('/:id/progress', auth, (req, res) => {
         quiz_completed:    r.quiz_completed ? true : false,
         progress:          parseFloat((r.progress || 0).toFixed(4)),
         video_position:    r.video_position || 0,
-        pdf_page:          r.pdf_page          || 1,    // ✅ PDF الدرس
-        pdf_exercise_page: r.pdf_exercise_page || 1,    // ✅ PDF التمارين
+        pdf_page:          r.pdf_page          || 1,
+        pdf_exercise_page: r.pdf_exercise_page || 1,
       });
     }
   );

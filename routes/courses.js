@@ -13,6 +13,7 @@
 //  ✅ FIX 8: POST / and PUT /:id accept both courseType and course_type from Flutter
 //  ✅ FIX 9: GET /api/courses/all — All courses (no teacher filter), accessible by admin & teacher
 //  ✅ FIX 10: GET /api/courses/stats — Teacher profile stats (coursesCount, studentsCount, quizzesCount)
+//  ✅ FIX 11: POST / — Notifies all students when a new course is created
 // ============================================================
 
 const express     = require('express');
@@ -21,6 +22,7 @@ const db          = require('../db');
 const jwt         = require('jsonwebtoken');
 const multer      = require('multer');
 const { storage } = require('../config/cloudinary');
+const NotificationService = require('../services/notificationService');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  CONSTANTS
@@ -125,8 +127,7 @@ router.get('/all', authAny, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/stats  —  Teacher profile statistics
-//  Returns: coursesCount, studentsCount, quizzesCount
-//  ⚠️ Must be defined BEFORE /:id to avoid "stats" being parsed as an id
+//  ⚠️ Must be defined BEFORE /:id
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.get('/stats', auth, (req, res) => {
@@ -189,9 +190,7 @@ router.get('/stats', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses  —  Create a new course
-//
-//  ✅ FIX: Accept both 'courseType' (Flutter camelCase) and 'course_type' (legacy)
-//  ✅ FIX: Thumbnail field is 'thumbnailFile'
+//  ✅ Notifies ALL students when a new course is added
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.post('/', auth, (req, res) => {
@@ -219,6 +218,21 @@ router.post('/', auth, (req, res) => {
           console.error('DB error creating course:', err);
           return res.status(500).json({ success: false, message: 'Database error' });
         }
+
+        // ── Notify all students ──────────────────────────────
+        db.query('SELECT user_id FROM students', (errS, students) => {
+          if (!errS && students && students.length) {
+            students.forEach(s => {
+              NotificationService.create(
+                s.user_id,
+                'course_update',
+                'New Course Available! 📚',
+                `"${title.trim()}" has been added — check it out now!`
+              ).catch(() => {});
+            });
+          }
+        });
+
         res.status(201).json({
           success:  true,
           message:  'Course created',
