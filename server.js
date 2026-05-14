@@ -34,6 +34,7 @@ app.use('/api/tasks',              taskRoutes);
 app.use('/api/result',             resultRoutes);
 app.use('/api/courses',            courseRoutes);
 app.use('/api/student/courses',    studentCourseRoutes);
+app.use('/api/student/courses',    require('./routes/courseInteractions')); // ✅
 app.use('/api/notifications',      notificationRoutes);
 app.use('/api/studentlist',        studentlistRoutes);
 app.use('/api/admin',              adminProfileRoutes);
