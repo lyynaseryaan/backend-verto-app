@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const NotificationService = require('../services/notificationService');
+//const NotificationService = require('../services/notificationService');
 const { verifyToken } = require('../middleware/auth'); // adjust path if needed
 
 // ─── Promisify db.query so we can use async/await throughout ───────────────
