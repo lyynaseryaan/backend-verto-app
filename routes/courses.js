@@ -158,12 +158,27 @@ router.get('/stats', auth, (req, res) => {
             [teacherId],
             (err3, r3) => {
               if (err3) return res.status(500).json({ success: false, message: 'Database error' });
-              res.status(200).json({
-                success: true,
-                coursesCount,
-                studentsCount,
-                quizzesCount: r3[0].quizzesCount,
-              });
+              const quizzesCount = r3[0].quizzesCount;
+
+              db.query(
+                `SELECT course_type AS subject, COUNT(*) AS cnt
+                 FROM courses
+                 WHERE teacher_id = ? AND course_type IS NOT NULL
+                 GROUP BY course_type
+                 ORDER BY cnt DESC
+                 LIMIT 1`,
+                [teacherId],
+                (err4, r4) => {
+                  const subject = (r4 && r4.length) ? r4[0].subject : null;
+                  res.status(200).json({
+                    success: true,
+                    coursesCount,
+                    studentsCount,
+                    quizzesCount,
+                    subject,
+                  });
+                }
+              );
             }
           );
         }
