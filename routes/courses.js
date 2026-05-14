@@ -11,6 +11,8 @@
 //  ✅ FIX 6: GET /api/courses returns camelCase aliases so Flutter CourseModel works
 //  ✅ FIX 7: GET /api/courses/:id returns camelCase aliases so Flutter CourseDetailModel works
 //  ✅ FIX 8: POST / and PUT /:id accept both courseType and course_type from Flutter
+//  ✅ FIX 9: GET /api/courses/all — All courses (no teacher filter), accessible by admin & teacher
+//  ✅ FIX 10: GET /api/courses/stats — Teacher profile stats (coursesCount, studentsCount, quizzesCount)
 // ============================================================
 
 const express     = require('express');
@@ -28,11 +30,6 @@ const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  MULTER — Cloudinary storage
-//
-//  ✅ FIX: Field names MUST match what Flutter sends:
-//    Thumbnail  : 'thumbnailFile'   (Flutter: map['thumbnailFile'] = ...)
-//    Level files: 'videoFile_Beginner', 'pdfCourseFile_Beginner', etc.
-//                 (Flutter: map['videoFile_$lvl'] = ...)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const upload = multer({
@@ -40,10 +37,8 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
 });
 
-// ✅ FIX: Flutter sends thumbnail as 'thumbnailFile'
 const uploadCourseImage = upload.single('thumbnailFile');
 
-// ✅ FIX: Flutter sends level files as 'videoFile_Beginner', 'pdfCourseFile_Beginner', etc.
 const levelFileFields = [];
 for (const lvl of VALID_LEVELS) {
   levelFileFields.push({ name: `videoFile_${lvl}`,       maxCount: 1 });
@@ -52,10 +47,9 @@ for (const lvl of VALID_LEVELS) {
 }
 const uploadLevelFiles = upload.fields(levelFileFields);
 
-// Helper: safely extract a Cloudinary URL from multer's files object
 function fileUrl(files, fieldname) {
   if (!files || !files[fieldname] || !files[fieldname][0]) return null;
-  return files[fieldname][0].path; // Cloudinary returns the full URL in .path
+  return files[fieldname][0].path;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -79,6 +73,106 @@ function auth(req, res, next) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  JWT MIDDLEWARE — any authenticated role (admin or teacher)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function authAny(req, res, next) {
+  const header = req.headers['authorization'];
+  if (!header)
+    return res.status(401).json({ success: false, message: 'No token provided' });
+
+  const token = header.split(' ')[1];
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err)
+      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+    req.userId   = decoded.id;
+    req.userRole = decoded.role;
+    next();
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/all  —  All courses (no teacher filter)
+//  Accessible by admin AND teacher
+//  ⚠️ Must be defined BEFORE /:id to avoid "all" being parsed as an id
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+router.get('/all', authAny, (req, res) => {
+  const sql = `
+    SELECT
+      c.id,
+      c.title,
+      c.description,
+      c.course_type   AS courseType,
+      c.chapter,
+      c.image_path    AS imagePath,
+      c.created_at    AS createdAt,
+      c.updated_at    AS updatedAt,
+      COUNT(DISTINCT cl.id) AS levelsCount
+    FROM courses c
+    LEFT JOIN course_levels cl ON cl.course_id = c.id
+    GROUP BY c.id
+    ORDER BY c.created_at DESC`;
+
+  db.query(sql, (err, rows) => {
+    if (err) {
+      console.error('DB error fetching all courses:', err);
+      return res.status(500).json({ success: false, message: 'Database error' });
+    }
+    res.status(200).json({ success: true, courses: rows });
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/stats  —  Teacher profile statistics
+//  Returns: coursesCount, studentsCount, quizzesCount
+//  ⚠️ Must be defined BEFORE /:id to avoid "stats" being parsed as an id
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+router.get('/stats', auth, (req, res) => {
+  const teacherId = req.userId;
+
+  db.query(
+    'SELECT COUNT(*) AS coursesCount FROM courses WHERE teacher_id = ?',
+    [teacherId],
+    (err1, r1) => {
+      if (err1) return res.status(500).json({ success: false, message: 'Database error' });
+      const coursesCount = r1[0].coursesCount;
+
+      db.query(
+        `SELECT COUNT(DISTINCT e.student_id) AS studentsCount
+         FROM enrollments e
+         INNER JOIN courses c ON c.id = e.course_id
+         WHERE c.teacher_id = ?`,
+        [teacherId],
+        (err2, r2) => {
+          if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+          const studentsCount = r2[0].studentsCount;
+
+          db.query(
+            `SELECT COUNT(qq.id) AS quizzesCount
+             FROM quiz_questions qq
+             INNER JOIN course_levels cl ON cl.id = qq.course_level_id
+             INNER JOIN courses c ON c.id = cl.course_id
+             WHERE c.teacher_id = ?`,
+            [teacherId],
+            (err3, r3) => {
+              if (err3) return res.status(500).json({ success: false, message: 'Database error' });
+              res.status(200).json({
+                success: true,
+                coursesCount,
+                studentsCount,
+                quizzesCount: r3[0].quizzesCount,
+              });
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses  —  Create a new course
 //
 //  ✅ FIX: Accept both 'courseType' (Flutter camelCase) and 'course_type' (legacy)
@@ -91,7 +185,6 @@ router.post('/', auth, (req, res) => {
       return res.status(400).json({ success: false, message: uploadErr.message });
 
     const { title, description } = req.body;
-    // ✅ FIX: Accept both camelCase (Flutter) and snake_case (legacy)
     const courseType = req.body.courseType || req.body.course_type || null;
     const chapter    = req.body.chapter    || null;
 
@@ -124,9 +217,6 @@ router.post('/', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses  —  All courses for the authenticated teacher
-//
-//  ✅ FIX: Return camelCase aliases so Flutter CourseModel.fromJson works
-//          without needing fallback logic
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.get('/', auth, (req, res) => {
@@ -158,9 +248,6 @@ router.get('/', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/:id  —  One course with levels + quiz questions
-//
-//  ✅ FIX: Return camelCase aliases so Flutter CourseDetailModel and
-//          LevelModel.fromJson work without fallback logic
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.get('/:id', auth, (req, res) => {
@@ -195,7 +282,6 @@ router.get('/:id', auth, (req, res) => {
     if (!courseRows.length)
       return res.status(404).json({ success: false, message: 'Course not found' });
 
-    // Build base course object from first row
     const base = courseRows[0];
     const course = {
       id:          base.id,
@@ -218,12 +304,10 @@ router.get('/:id', auth, (req, res) => {
           quizNote:      r.quizNote      ?? '',
           pdfCourse:     r.pdfCourse     ?? '',
           pdfExercise:   r.pdfExercise   ?? '',
-          quizQuestions: [], // populated below from quiz_questions table
+          quizQuestions: [],
         })),
     };
 
-    // ✅ FIX: Fetch quiz questions safely — if the table doesn't exist yet,
-    //    don't crash, just return the course without quiz questions.
     const quizSql = `
       SELECT
         qq.id,
@@ -237,13 +321,11 @@ router.get('/:id', auth, (req, res) => {
       ORDER BY cl.level, qq.id`;
 
     db.query(quizSql, [req.params.id], (err2, quizRows) => {
-      // If quiz_questions table doesn't exist yet, just skip it gracefully
       if (err2) {
         console.warn('quiz_questions query failed (table may not exist):', err2.message);
         return res.status(200).json({ success: true, course });
       }
 
-      // Attach quiz questions to matching levels
       if (quizRows && quizRows.length) {
         quizRows.forEach(q => {
           const level = course.levels.find(l => l.id === q.courseLevelId);
@@ -267,10 +349,7 @@ router.get('/:id', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  PUT /api/courses/:id  —  Update basic info and/or thumbnail
-//
-//  ✅ FIX: Accept both 'courseType' (Flutter) and 'course_type' (legacy)
-//  ✅ FIX: Thumbnail field is 'thumbnailFile'
+//  PUT /api/courses/:id
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.put('/:id', auth, (req, res) => {
@@ -285,16 +364,11 @@ router.put('/:id', auth, (req, res) => {
         if (err)
           return res.status(500).json({ success: false, message: 'Database error' });
         if (!rows.length)
-          return res.status(404).json({
-            success: false, message: 'Course not found or unauthorized',
-          });
+          return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
 
         const { title, description } = req.body;
-        // ✅ FIX: Accept both camelCase (Flutter) and snake_case (legacy)
-        const courseType = req.body.courseType || req.body.course_type || null;
-        const chapter    = req.body.chapter    || null;
-
-        // Keep old Cloudinary URL if no new file uploaded
+        const courseType   = req.body.courseType || req.body.course_type || null;
+        const chapter      = req.body.chapter    || null;
         const newImagePath = req.file ? req.file.path : rows[0].image_path;
 
         db.query(
@@ -312,11 +386,7 @@ router.put('/:id', auth, (req, res) => {
               console.error('DB error updating course:', err2);
               return res.status(500).json({ success: false, message: 'Database error' });
             }
-            res.status(200).json({
-              success:   true,
-              message:   'Course updated',
-              imagePath: newImagePath,
-            });
+            res.status(200).json({ success: true, message: 'Course updated', imagePath: newImagePath });
           }
         );
       }
@@ -336,9 +406,7 @@ router.delete('/:id', auth, (req, res) => {
       if (err)
         return res.status(500).json({ success: false, message: 'Database error' });
       if (!rows.length)
-        return res.status(404).json({
-          success: false, message: 'Course not found or unauthorized',
-        });
+        return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
 
       db.query('DELETE FROM courses WHERE id = ?', [req.params.id], (err2) => {
         if (err2) {
@@ -353,17 +421,6 @@ router.delete('/:id', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses/:id/levels
-//
-//  Saves content for all 3 adaptive levels.
-//
-//  ✅ FIX: File field names match Flutter:
-//            videoFile_Beginner, pdfCourseFile_Beginner, pdfExerciseFile_Beginner
-//
-//  ✅ FIX: JSON level keys match Flutter LevelPayload.toJson():
-//            { level, videoUrl, textContent, quizNote }   (camelCase)
-//
-//  ✅ FIX: quiz_questions save is wrapped safely — if the table doesn't
-//          exist, levels still save successfully and we return 200.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.post('/:id/levels', auth, (req, res) => {
@@ -371,22 +428,18 @@ router.post('/:id/levels', auth, (req, res) => {
     if (uploadErr)
       return res.status(400).json({ success: false, message: uploadErr.message });
 
-    // ── Parse levels payload ──────────────────────────────
     let levels;
     try {
       levels = typeof req.body.levels === 'string'
         ? JSON.parse(req.body.levels)
         : req.body.levels;
     } catch (_) {
-      return res.status(400).json({
-        success: false, message: 'levels must be a valid JSON array',
-      });
+      return res.status(400).json({ success: false, message: 'levels must be a valid JSON array' });
     }
 
     if (!levels || !Array.isArray(levels) || !levels.length)
       return res.status(400).json({ success: false, message: 'levels array is required' });
 
-    // ── Validate level names ──────────────────────────────
     const invalidLevel = levels.find(l => !VALID_LEVELS.includes(l.level));
     if (invalidLevel)
       return res.status(400).json({
@@ -394,7 +447,6 @@ router.post('/:id/levels', auth, (req, res) => {
         message: `level must be one of: ${VALID_LEVELS.join(', ')}`,
       });
 
-    // ── Verify course ownership ───────────────────────────
     db.query(
       'SELECT id FROM courses WHERE id = ? AND teacher_id = ?',
       [req.params.id, req.userId],
@@ -402,37 +454,24 @@ router.post('/:id/levels', auth, (req, res) => {
         if (err)
           return res.status(500).json({ success: false, message: 'Database error' });
         if (!rows.length)
-          return res.status(404).json({
-            success: false, message: 'Course not found or unauthorized',
-          });
+          return res.status(404).json({ success: false, message: 'Course not found or unauthorized' });
 
         const files = req.files || {};
 
-        // ── Build batch INSERT rows ───────────────────────
-        // ✅ FIX: Read camelCase keys from Flutter payload:
-        //   level.videoUrl     (was: l.video_url)
-        //   level.textContent  (was: l.text_content)
-        //   level.quizNote     (was: l.quiz_note)
-        //
-        // ✅ FIX: File fields use Flutter names:
-        //   videoFile_{lvl}, pdfCourseFile_{lvl}, pdfExerciseFile_{lvl}
         const levelRows = levels.map(l => {
           const lvl = l.level;
           return [
             req.params.id,
             lvl,
-            l.videoUrl     || null,   // ✅ camelCase from Flutter
-            fileUrl(files, `videoFile_${lvl}`),        // ✅ Flutter field name
-            l.textContent  || null,   // ✅ camelCase from Flutter
-            l.quizNote     || null,   // ✅ camelCase from Flutter
-            fileUrl(files, `pdfCourseFile_${lvl}`),    // ✅ Flutter field name
-            fileUrl(files, `pdfExerciseFile_${lvl}`),  // ✅ Flutter field name
+            l.videoUrl     || null,
+            fileUrl(files, `videoFile_${lvl}`),
+            l.textContent  || null,
+            l.quizNote     || null,
+            fileUrl(files, `pdfCourseFile_${lvl}`),
+            fileUrl(files, `pdfExerciseFile_${lvl}`),
           ];
         });
 
-        // ── Upsert course_levels ──────────────────────────
-        // Text fields always overwrite. File paths use COALESCE to
-        // preserve existing Cloudinary URLs when no new file is sent.
         db.query(
           `INSERT INTO course_levels
              (course_id, level, video_url, video_file_path,
@@ -452,31 +491,19 @@ router.post('/:id/levels', auth, (req, res) => {
               return res.status(500).json({ success: false, message: 'Error saving levels' });
             }
 
-            // Levels saved ✅ — now try to save structured quiz questions.
-            // ✅ FIX: This entire block is wrapped in try/catch and uses
-            // graceful error handling so a missing quiz_questions table
-            // does NOT cause a 500 — levels are already saved.
-
-            // Check if any level has structured quiz_questions to save
             const hasQuizQuestions = levels.some(
               l => Array.isArray(l.quiz_questions) && l.quiz_questions.length > 0
             );
 
             if (!hasQuizQuestions) {
-              // Nothing to save in quiz_questions table — return success now
-              return res.status(200).json({
-                success: true,
-                message: 'Levels saved successfully',
-              });
+              return res.status(200).json({ success: true, message: 'Levels saved successfully' });
             }
 
-            // ── Fetch level IDs needed to link quiz rows ──
             db.query(
               'SELECT id, level FROM course_levels WHERE course_id = ? AND level IN (?)',
               [req.params.id, levels.map(l => l.level)],
               (err3, levelIds) => {
                 if (err3) {
-                  // Level data is already saved — just skip quiz questions
                   console.warn('Could not fetch level IDs for quiz save:', err3.message);
                   return res.status(200).json({
                     success: true,
@@ -487,7 +514,6 @@ router.post('/:id/levels', auth, (req, res) => {
                 const levelMap = {};
                 levelIds.forEach(r => { levelMap[r.level] = r.id; });
 
-                // Build quiz_questions INSERT rows
                 const quizInserts = [];
                 levels.forEach(level => {
                   const courseLevelId = levelMap[level.level];
@@ -505,19 +531,14 @@ router.post('/:id/levels', auth, (req, res) => {
                 });
 
                 if (!quizInserts.length) {
-                  return res.status(200).json({
-                    success: true,
-                    message: 'Levels saved successfully',
-                  });
+                  return res.status(200).json({ success: true, message: 'Levels saved successfully' });
                 }
 
-                // DELETE existing quiz questions for these levels, then re-INSERT
                 db.query(
                   'DELETE FROM quiz_questions WHERE course_level_id IN (?)',
                   [Object.values(levelMap)],
                   (err4) => {
                     if (err4) {
-                      // ✅ FIX: Table may not exist — levels are saved, just skip
                       console.warn('quiz_questions DELETE failed (table may not exist):', err4.message);
                       return res.status(200).json({
                         success: true,
@@ -533,7 +554,6 @@ router.post('/:id/levels', auth, (req, res) => {
                       (err5) => {
                         if (err5) {
                           console.warn('quiz_questions INSERT failed:', err5.message);
-                          // Levels still saved — return success
                           return res.status(200).json({
                             success: true,
                             message: 'Levels saved. Quiz questions could not be saved.',
@@ -556,54 +576,6 @@ router.post('/:id/levels', auth, (req, res) => {
       }
     );
   });
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/courses/stats  —  Teacher profile statistics
-//  Returns: coursesCount, studentsCount, quizzesCount
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-router.get("/stats", auth, (req, res) => {
-  const teacherId = req.userId;
-
-  db.query(
-    "SELECT COUNT(*) AS coursesCount FROM courses WHERE teacher_id = ?",
-    [teacherId],
-    (err1, r1) => {
-      if (err1) return res.status(500).json({ success: false, message: "Database error" });
-      const coursesCount = r1[0].coursesCount;
-
-      db.query(
-        `SELECT COUNT(DISTINCT e.student_id) AS studentsCount
-         FROM enrollments e
-         INNER JOIN courses c ON c.id = e.course_id
-         WHERE c.teacher_id = ?`,
-        [teacherId],
-        (err2, r2) => {
-          if (err2) return res.status(500).json({ success: false, message: "Database error" });
-          const studentsCount = r2[0].studentsCount;
-
-          db.query(
-            `SELECT COUNT(qq.id) AS quizzesCount
-             FROM quiz_questions qq
-             INNER JOIN course_levels cl ON cl.id = qq.course_level_id
-             INNER JOIN courses c ON c.id = cl.course_id
-             WHERE c.teacher_id = ?`,
-            [teacherId],
-            (err3, r3) => {
-              if (err3) return res.status(500).json({ success: false, message: "Database error" });
-              res.status(200).json({
-                success: true,
-                coursesCount,
-                studentsCount,
-                quizzesCount: r3[0].quizzesCount,
-              });
-            }
-          );
-        }
-      );
-    }
-  );
 });
 
 module.exports = router;
