@@ -229,7 +229,7 @@ router.get('/:courseId/comments', auth, (req, res) => {
   db.query(
     `SELECT c.id, c.comment_text, c.created_at,
             c.student_id,
-            COALESCE(u.full_name, u.name, CONCAT('Student #', c.student_id)) AS student_name
+            COALESCE(u.name, CONCAT('Student #', c.student_id)) AS student_name
      FROM comments c
      LEFT JOIN users u ON u.id = c.student_id
      WHERE c.course_id = ?
@@ -297,7 +297,7 @@ router.post('/:courseId/comments', auth, (req, res) => {
       // جيب الكمنت المدخل مع اسم الطالب
       db.query(
         `SELECT c.id, c.comment_text, c.created_at, c.student_id,
-                COALESCE(u.full_name, u.name, CONCAT('Student #', c.student_id)) AS student_name
+                COALESCE(u.name, CONCAT('Student #', c.student_id)) AS student_name
          FROM comments c
          LEFT JOIN users u ON u.id = c.student_id
          WHERE c.id = ?`,
