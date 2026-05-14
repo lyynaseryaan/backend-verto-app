@@ -12,7 +12,7 @@ const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
 
-// ━━━ AUTH (same pattern as studentCourse.js) ━━━━━━━━━━━━━━
+// ━━━ AUTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function auth(req, res, next) {
   const header = req.headers['authorization'];
   if (!header)
@@ -29,8 +29,6 @@ function auth(req, res, next) {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:courseId/interactions
-//  Returns: likesCount, isLiked, avgRating, ratingsCount,
-//           commentsCount, userRating
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:courseId/interactions', auth, (req, res) => {
   const courseId = parseInt(req.params.courseId);
@@ -39,21 +37,21 @@ router.get('/:courseId/interactions', auth, (req, res) => {
 
   const userId = req.userId;
 
-  // Run 4 queries in parallel using a simple counter
   let done = 0;
   let hasError = false;
   const data = {};
 
   function finish() {
+    if (hasError) return;
     done++;
-    if (hasError || done < 4) return;
+    if (done < 4) return;
     return res.status(200).json({
-      success:       true,
-      likes_count:   data.likesCount,
-      is_liked:      data.isLiked,
-      avg_rating:    data.avgRating,
-      ratings_count: data.ratingsCount,
-      user_rating:   data.userRating,
+      success:        true,
+      likes_count:    data.likesCount,
+      is_liked:       data.isLiked,
+      avg_rating:     data.avgRating,
+      ratings_count:  data.ratingsCount,
+      user_rating:    data.userRating,
       comments_count: data.commentsCount,
     });
   }
@@ -63,7 +61,10 @@ router.get('/:courseId/interactions', auth, (req, res) => {
     'SELECT COUNT(*) AS cnt FROM likes WHERE course_id = ?',
     [courseId],
     (err, rows) => {
-      if (err) { hasError = true; return res.status(500).json({ success: false, message: 'DB error (likes count)' }); }
+      if (err) {
+        hasError = true;
+        return res.status(500).json({ success: false, message: 'DB error (likes count)' });
+      }
       data.likesCount = rows[0].cnt;
       finish();
     }
@@ -74,7 +75,10 @@ router.get('/:courseId/interactions', auth, (req, res) => {
     'SELECT id FROM likes WHERE course_id = ? AND student_id = ? LIMIT 1',
     [courseId, userId],
     (err, rows) => {
-      if (err) { hasError = true; return res.status(500).json({ success: false, message: 'DB error (is liked)' }); }
+      if (err) {
+        hasError = true;
+        return res.status(500).json({ success: false, message: 'DB error (is liked)' });
+      }
       data.isLiked = rows.length > 0;
       finish();
     }
@@ -89,7 +93,10 @@ router.get('/:courseId/interactions', auth, (req, res) => {
      FROM ratings WHERE course_id = ?`,
     [userId, courseId],
     (err, rows) => {
-      if (err) { hasError = true; return res.status(500).json({ success: false, message: 'DB error (ratings)' }); }
+      if (err) {
+        hasError = true;
+        return res.status(500).json({ success: false, message: 'DB error (ratings)' });
+      }
       data.ratingsCount = rows[0].cnt;
       data.avgRating    = rows[0].avg_val ? parseFloat(parseFloat(rows[0].avg_val).toFixed(1)) : 0;
       data.userRating   = rows[0].user_val || 0;
@@ -97,12 +104,15 @@ router.get('/:courseId/interactions', auth, (req, res) => {
     }
   );
 
-  // 4. Comments count
+  // 4. Comments count — ✅ فقط course_id بدون course_level_id
   db.query(
     'SELECT COUNT(*) AS cnt FROM comments WHERE course_id = ?',
     [courseId],
     (err, rows) => {
-      if (err) { hasError = true; return res.status(500).json({ success: false, message: 'DB error (comments count)' }); }
+      if (err) {
+        hasError = true;
+        return res.status(500).json({ success: false, message: 'DB error (comments count)' });
+      }
       data.commentsCount = rows[0].cnt;
       finish();
     }
@@ -111,7 +121,6 @@ router.get('/:courseId/interactions', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/student/courses/:courseId/like
-//  Toggles like/unlike — returns { isLiked, likesCount }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:courseId/like', auth, (req, res) => {
   const courseId = parseInt(req.params.courseId);
@@ -120,7 +129,6 @@ router.post('/:courseId/like', auth, (req, res) => {
 
   const userId = req.userId;
 
-  // Check if already liked
   db.query(
     'SELECT id FROM likes WHERE course_id = ? AND student_id = ? LIMIT 1',
     [courseId, userId],
@@ -140,7 +148,6 @@ router.post('/:courseId/like', auth, (req, res) => {
       db.query(toggleSql, toggleParams, (err2) => {
         if (err2) return res.status(500).json({ success: false, message: 'Database error' });
 
-        // Return fresh count
         db.query(
           'SELECT COUNT(*) AS cnt FROM likes WHERE course_id = ?',
           [courseId],
@@ -160,8 +167,6 @@ router.post('/:courseId/like', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/student/courses/:courseId/rate
-//  Body: { rating_value: 1–5 }
-//  INSERT or UPDATE (one rating per student per course)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:courseId/rate', auth, (req, res) => {
   const courseId    = parseInt(req.params.courseId);
@@ -174,7 +179,6 @@ router.post('/:courseId/rate', auth, (req, res) => {
 
   const userId = req.userId;
 
-  // Check if already rated (course_level_id not required — set to 0 or NULL)
   db.query(
     'SELECT id FROM ratings WHERE course_id = ? AND student_id = ? LIMIT 1',
     [courseId, userId],
@@ -190,7 +194,6 @@ router.post('/:courseId/rate', auth, (req, res) => {
       db.query(sql, params, (err2) => {
         if (err2) return res.status(500).json({ success: false, message: 'Database error' });
 
-        // Return fresh stats
         db.query(
           'SELECT COUNT(*) AS cnt, AVG(rating_value) AS avg_val FROM ratings WHERE course_id = ?',
           [courseId],
@@ -211,8 +214,7 @@ router.post('/:courseId/rate', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:courseId/comments
-//  Query: ?page=1&limit=20
-//  Returns comments with student name, sorted newest first
+//  ✅ FIX: جيب كل الكمنتس تاع الـ course بدون فلتر زيادة
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:courseId/comments', auth, (req, res) => {
   const courseId = parseInt(req.params.courseId);
@@ -223,12 +225,11 @@ router.get('/:courseId/comments', auth, (req, res) => {
   const limit  = Math.min(50, parseInt(req.query.limit) || 20);
   const offset = (page - 1) * limit;
 
-  // JOIN with users/students table to get name
-  // Adjust 'users' and column names to match your actual schema
+  // ✅ FIX: WHERE c.course_id = ? فقط — بدون أي شرط على student_id أو course_level_id
   db.query(
     `SELECT c.id, c.comment_text, c.created_at,
             c.student_id,
-            COALESCE(u.full_name, u.name, CONCAT('Student #', c.student_id)) AS student_name
+            COALESCE(u.name, CONCAT('Student #', c.student_id)) AS student_name
      FROM comments c
      LEFT JOIN users u ON u.id = c.student_id
      WHERE c.course_id = ?
@@ -236,9 +237,11 @@ router.get('/:courseId/comments', auth, (req, res) => {
      LIMIT ? OFFSET ?`,
     [courseId, limit, offset],
     (err, rows) => {
-      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      if (err) {
+        console.error('Comments fetch error:', err); // ✅ log للـ debug
+        return res.status(500).json({ success: false, message: 'Database error' });
+      }
 
-      // Total count for pagination
       db.query(
         'SELECT COUNT(*) AS cnt FROM comments WHERE course_id = ?',
         [courseId],
@@ -246,11 +249,11 @@ router.get('/:courseId/comments', auth, (req, res) => {
           if (err2) return res.status(500).json({ success: false, message: 'Database error' });
           const total = countRows[0].cnt;
           return res.status(200).json({
-            success: true,
+            success:     true,
             total,
             page,
             total_pages: Math.ceil(total / limit),
-            comments: rows.map(r => ({
+            comments:    rows.map(r => ({
               id:           r.id,
               student_id:   r.student_id,
               student_name: r.student_name,
@@ -266,10 +269,10 @@ router.get('/:courseId/comments', auth, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/student/courses/:courseId/comments
-//  Body: { comment_text: "..." }
+//  ✅ FIX: INSERT بدون course_level_id (NULL تلقائي)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post('/:courseId/comments', auth, (req, res) => {
-  const courseId   = parseInt(req.params.courseId);
+  const courseId    = parseInt(req.params.courseId);
   const commentText = (req.body.comment_text || '').trim();
 
   if (isNaN(courseId))
@@ -281,24 +284,38 @@ router.post('/:courseId/comments', auth, (req, res) => {
 
   const userId = req.userId;
 
-  // course_level_id is optional in your schema — set to NULL if not needed
+  // ✅ FIX: نحدد الـ columns بالصراحة ونخلي course_level_id = NULL تلقائي
   db.query(
     'INSERT INTO comments (student_id, course_id, comment_text) VALUES (?, ?, ?)',
     [userId, courseId, commentText],
     (err, result) => {
-      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      if (err) {
+        console.error('Comment insert error:', err); // ✅ log للـ debug
+        return res.status(500).json({ success: false, message: 'Database error' });
+      }
 
-      // Fetch the inserted comment with student name
+      // جيب الكمنت المدخل مع اسم الطالب
       db.query(
         `SELECT c.id, c.comment_text, c.created_at, c.student_id,
-                COALESCE(u.full_name, u.name, CONCAT('Student #', c.student_id)) AS student_name
+                COALESCE(u.name, CONCAT('Student #', c.student_id)) AS student_name
          FROM comments c
          LEFT JOIN users u ON u.id = c.student_id
          WHERE c.id = ?`,
         [result.insertId],
         (err2, rows) => {
-          if (err2 || !rows.length)
-            return res.status(200).json({ success: true, comment: { id: result.insertId, comment_text: commentText, created_at: new Date(), student_id: userId, student_name: 'You' } });
+          if (err2 || !rows.length) {
+            // Fallback إذا فشل الـ SELECT
+            return res.status(201).json({
+              success: true,
+              comment: {
+                id:           result.insertId,
+                comment_text: commentText,
+                created_at:   new Date(),
+                student_id:   userId,
+                student_name: 'You',
+              },
+            });
+          }
           const r = rows[0];
           return res.status(201).json({
             success: true,
@@ -321,4 +338,3 @@ module.exports = router;
 // ━━━ HOW TO MOUNT IN app.js / server.js ━━━━━━━━━━━━━━━━━━
 // const interactionsRouter = require('./routes/courseInteractions');
 // app.use('/api/student/courses', interactionsRouter);
-// (Mount AFTER your existing studentCourse router or merge into it)
