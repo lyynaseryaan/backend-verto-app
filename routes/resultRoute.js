@@ -1,17 +1,15 @@
 // ============================================================
 //  resultRoute.js  –  Verto LMS
-//  ✅ After calculating level → saves it to student_results
-//     and updates current_level in students table
 // ============================================================
 
 const express = require("express");
 const router  = express.Router();
 const db      = require("../db");
 const { verifyToken } = require("./quiz");
+const NotificationService = require("../services/notificationService");
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/result
-//  Calculates quiz result, saves it, and updates student level
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get("/", verifyToken, (req, res) => {
   const studentId = req.userId;
@@ -62,20 +60,28 @@ router.get("/", verifyToken, (req, res) => {
       };
 
       // ── Save to student_results ──────────────────────────
-      const insertResult = `
-        INSERT INTO student_results (student_id, correct, total, accuracy, level)
-        VALUES (?, ?, ?, ?, ?)
-      `;
-      db.query(insertResult, [studentId, correct, total, accuracy, level],
+      db.query(
+        `INSERT INTO student_results (student_id, correct, total, accuracy, level)
+         VALUES (?, ?, ?, ?, ?)`,
+        [studentId, correct, total, accuracy, level],
         (err) => { if (err) console.error("Error saving result:", err); }
       );
 
-      // ✅ Update level in students table via user_id
+      // ── Update level in students table ───────────────────
       db.query(
         "UPDATE students SET current_level = ? WHERE user_id = ?",
         [level, studentId],
         (err) => { if (err) console.error("Error updating student level:", err); }
       );
+
+      // ── Send quiz_result notification ────────────────────
+      const scorePercent = Math.round(accuracy * 100);
+      NotificationService.create(
+        studentId,
+        'quiz_result',
+        'Assessment Completed!',
+        `You scored ${correct}/${total} (${scorePercent}%) — Level assigned: ${level}`
+      ).catch(e => console.error("Notification error:", e));
 
       // Return result to Flutter
       res.json({ correct, total, accuracy, level, subjects: subjectResults });
@@ -85,7 +91,6 @@ router.get("/", verifyToken, (req, res) => {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/result/level
-//  Dashboard calls this to get the student's current level
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get("/level", verifyToken, (req, res) => {
   db.query(
@@ -99,14 +104,11 @@ router.get("/level", verifyToken, (req, res) => {
   );
 });
 
-module.exports = router;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/result/roadmap
-//  Generates a personalized learning roadmap using Groq
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post("/roadmap", verifyToken, async (req, res) => {
   const { correct, total, level, subjects } = req.body;
-  console.log(">>> /roadmap called, body:", JSON.stringify(req.body));
 
   const mathPct    = Math.round((subjects?.Mathematics ?? 0) * 100);
   const physicsPct = Math.round((subjects?.Physics     ?? 0) * 100);
@@ -142,7 +144,6 @@ Keep it brief, clear, and encouraging. Use numbered points only.`;
       }),
     });
 
-    console.log(">>> Groq response:", JSON.stringify(data));
     const data = await response.json();
     const roadmap = data.choices?.[0]?.message?.content ?? "Could not generate roadmap.";
     res.json({ success: true, roadmap });
@@ -151,3 +152,5 @@ Keep it brief, clear, and encouraging. Use numbered points only.`;
     res.status(500).json({ success: false, message: "Failed to generate roadmap" });
   }
 });
+
+module.exports = router;
