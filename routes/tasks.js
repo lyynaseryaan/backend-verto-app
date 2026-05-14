@@ -1,7 +1,8 @@
 const express = require('express');
-const router = express.Router();
-const db = require('../db');
-const jwt = require('jsonwebtoken');
+const router  = express.Router();
+const db      = require('../db');
+const jwt     = require('jsonwebtoken');
+const NotificationService = require('../services/notificationService');
 
 // ─── helper: verify token ───
 function auth(req, res, next) {
@@ -27,6 +28,7 @@ router.get('/', auth, (req, res) => {
     res.status(200).json({ success: true, tasks: results });
   });
 });
+
 // ================= ADD TASK =================
 router.post('/add', auth, (req, res) => {
   const { title, duration } = req.body;
@@ -82,6 +84,36 @@ router.delete('/delete/:id', auth, (req, res) => {
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: "Task not found" });
     res.status(200).json({ success: true, message: "Task deleted" });
   });
+});
+
+// ================= NOTIFY DEADLINE =================
+// يُستدعى من Flutter عند انتهاء مؤقت المهمة
+// POST /api/tasks/notify-deadline/:id
+router.post('/notify-deadline/:id', auth, (req, res) => {
+  const taskId = req.params.id;
+
+  db.query(
+    'SELECT title FROM tasks WHERE id = ? AND user_id = ?',
+    [taskId, req.userId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      if (!rows.length) return res.status(404).json({ success: false, message: 'Task not found' });
+
+      const taskTitle = rows[0].title;
+
+      NotificationService.create(
+        req.userId,
+        'task_deadline',
+        'Task Time is Up! ⏰',
+        `Time for "${taskTitle}" has ended`
+      ).then(() => {
+        res.status(200).json({ success: true });
+      }).catch(e => {
+        console.error('task deadline notification error:', e);
+        res.status(500).json({ success: false, message: 'Notification error' });
+      });
+    }
+  );
 });
 
 module.exports = router;
