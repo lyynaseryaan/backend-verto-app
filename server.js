@@ -47,7 +47,6 @@ app.use('/api/profile', require('./routes/profile'));
 // ── NEW route ─────────────────────────────────────────────────────
 const instructorRequestsRoutes = require('./routes/instructorRequests');
 
-app.use('/api/auth',                    authRoutes);
 app.use('/api',                         levelRoutes);
 app.use('/api',                         quizRoutes);
 app.use('/api/tasks',                   taskRoutes);
