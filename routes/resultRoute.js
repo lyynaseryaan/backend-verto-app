@@ -106,6 +106,7 @@ module.exports = router;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.post("/roadmap", verifyToken, async (req, res) => {
   const { correct, total, level, subjects } = req.body;
+  console.log(">>> /roadmap called, body:", JSON.stringify(req.body));
 
   const mathPct    = Math.round((subjects?.Mathematics ?? 0) * 100);
   const physicsPct = Math.round((subjects?.Physics     ?? 0) * 100);
@@ -141,6 +142,7 @@ Keep it brief, clear, and encouraging. Use numbered points only.`;
       }),
     });
 
+    console.log(">>> Groq response:", JSON.stringify(data));
     const data = await response.json();
     const roadmap = data.choices?.[0]?.message?.content ?? "Could not generate roadmap.";
     res.json({ success: true, roadmap });
