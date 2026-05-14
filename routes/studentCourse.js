@@ -530,12 +530,15 @@ router.post('/:courseId/quiz/submit', auth, (req, res) => {
             }
 
             // ── Send quiz_result notification ──────────────────
-            NotificationService.create(
-              req.userId,
-              'quiz_result',
-              passed ? 'Quiz Passed! 🎉' : 'Quiz Completed',
-              `You scored ${percentage}% (${correctCount}/${total}) on the ${level} quiz`
-            ).catch(e => console.warn('[quiz/submit] notification error:', e.message));
+            db.query('SELECT title FROM courses WHERE id = ?', [courseId], (errC, courseRows) => {
+              const courseTitle = (courseRows && courseRows.length) ? courseRows[0].title : 'Quiz';
+              NotificationService.create(
+                req.userId,
+                'quiz_result',
+                passed ? 'Quiz Passed! 🎉' : 'Quiz Completed',
+                `You scored ${percentage}% (${correctCount}/${total}) on "${courseTitle}"`
+              ).catch(e => console.warn('[quiz/submit] notification error:', e.message));
+            });
 
             let ai = { explanations: [], nextStep: 'proceed', nextStepMessage: '', coachMessage: '' };
             try {
