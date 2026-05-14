@@ -27,6 +27,7 @@ const instructorRoutes    = require('./routes/instructors');   // approved instr
 const chatbotRoutes       = require('./routes/chatbot');
 const adminCoursesRoutes  = require('./routes/adminCourses');
 const profileRoute        = require('./routes/profile');
+const courseInteractionsRoutes = require('./routes/courseInteractions');
 
 app.use('/api/auth',             authRoutes);
 app.use('/api',                  levelRoutes);
@@ -60,7 +61,7 @@ app.use('/api/activity-feed',           activityFeedRoutes);
 app.use('/api/instructors',             instructorRoutes);     // existing (GET/DELETE only now)
 app.use('/api/chatbot',                 chatbotRoutes);
 app.use('/api/admin-courses',           adminCoursesRoutes);
-
+app.use('/api/student/courses', courseInteractionsRoutes);
 // ── Instructor application routes ─────────────────────────────────
 // Public submit:   POST   /api/instructor-requests
 // Admin list:      GET    /api/instructor-requests/admin
