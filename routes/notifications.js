@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const db      = require('../db');
-const NotificationService = require('../notificationService');
+const NotificationService = require('./notificationService');
 const { verifyToken } = require('./quiz');
 
 // ─── Promisify db.query ────────────────────────────────────────────────────
