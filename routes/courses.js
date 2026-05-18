@@ -156,6 +156,54 @@ router.get('/', auth, (req, res) => {
   });
 });
 
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/stats  —  Teacher dashboard statistics
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/stats', auth, (req, res) => {
+  const teacherId = req.userId;
+
+  db.query('SELECT COUNT(*) AS coursesCount FROM courses WHERE teacher_id = ?', [teacherId], (err1, r1) => {
+    if (err1) return res.status(500).json({ success: false, message: 'Database error' });
+
+    db.query(
+      `SELECT COUNT(DISTINCT e.student_id) AS studentsCount
+       FROM enrollments e INNER JOIN courses c ON c.id = e.course_id
+       WHERE c.teacher_id = ?`,
+      [teacherId],
+      (err2, r2) => {
+        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+
+        db.query(
+          `SELECT ROUND(AVG(e.progress) * 100) AS avgProgress
+           FROM enrollments e INNER JOIN courses c ON c.id = e.course_id
+           WHERE c.teacher_id = ?`,
+          [teacherId],
+          (err3, r3) => {
+            if (err3) return res.status(500).json({ success: false, message: 'Database error' });
+
+            db.query(
+              `SELECT course_type AS subject, COUNT(*) AS cnt
+               FROM courses WHERE teacher_id = ? AND course_type IS NOT NULL
+               GROUP BY course_type ORDER BY cnt DESC LIMIT 1`,
+              [teacherId],
+              (err4, r4) => {
+                return res.status(200).json({
+                  success:      true,
+                  coursesCount: r1[0].coursesCount,
+                  studentsCount: r2[0].studentsCount,
+                  avgProgress:  r3[0].avgProgress || 0,
+                  subject:      (r4 && r4.length) ? r4[0].subject : null,
+                });
+              }
+            );
+          }
+        );
+      }
+    );
+  });
+});
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/:id  —  One course with levels + quiz questions
 //
@@ -549,54 +597,6 @@ router.post('/:id/levels', auth, (req, res) => {
                     );
                   }
                 );
-              }
-            );
-          }
-        );
-      }
-    );
-  });
-});
-
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/courses/stats  —  Teacher dashboard statistics
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/stats', auth, (req, res) => {
-  const teacherId = req.userId;
-
-  db.query('SELECT COUNT(*) AS coursesCount FROM courses WHERE teacher_id = ?', [teacherId], (err1, r1) => {
-    if (err1) return res.status(500).json({ success: false, message: 'Database error' });
-
-    db.query(
-      `SELECT COUNT(DISTINCT e.student_id) AS studentsCount
-       FROM enrollments e INNER JOIN courses c ON c.id = e.course_id
-       WHERE c.teacher_id = ?`,
-      [teacherId],
-      (err2, r2) => {
-        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
-
-        db.query(
-          `SELECT ROUND(AVG(e.progress) * 100) AS avgProgress
-           FROM enrollments e INNER JOIN courses c ON c.id = e.course_id
-           WHERE c.teacher_id = ?`,
-          [teacherId],
-          (err3, r3) => {
-            if (err3) return res.status(500).json({ success: false, message: 'Database error' });
-
-            db.query(
-              `SELECT course_type AS subject, COUNT(*) AS cnt
-               FROM courses WHERE teacher_id = ? AND course_type IS NOT NULL
-               GROUP BY course_type ORDER BY cnt DESC LIMIT 1`,
-              [teacherId],
-              (err4, r4) => {
-                return res.status(200).json({
-                  success:      true,
-                  coursesCount: r1[0].coursesCount,
-                  studentsCount: r2[0].studentsCount,
-                  avgProgress:  r3[0].avgProgress || 0,
-                  subject:      (r4 && r4.length) ? r4[0].subject : null,
-                });
               }
             );
           }
