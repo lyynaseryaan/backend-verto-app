@@ -189,6 +189,28 @@ router.get('/enrolled', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/student/courses/:id/learners
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/:id/learners', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) {
+    return res.status(400).json({ success: false, message: 'Invalid course id' });
+  }
+
+  db.query(
+    'SELECT COUNT(*) AS learnersCount FROM enrollments WHERE course_id = ?',
+    [courseId],
+    (err, rows) => {
+      if (err) {
+        console.error('[learners] count error:', err);
+        return res.status(500).json({ success: false, message: 'Database error' });
+      }
+      return res.status(200).json({ success: true, learnersCount: rows[0].learnersCount });
+    }
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:id
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id', auth, (req, res) => {
@@ -231,28 +253,6 @@ router.get('/:id', auth, (req, res) => {
       course: shapeCourse(rows[0], req),
     });
   });
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id/learners
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/:id/learners', auth, (req, res) => {
-  const courseId = parseInt(req.params.id);
-  if (isNaN(courseId)) {
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  }
-
-  db.query(
-    'SELECT COUNT(*) AS learnersCount FROM enrollments WHERE course_id = ?',
-    [courseId],
-    (err, rows) => {
-      if (err) {
-        console.error('[learners] count error:', err);
-        return res.status(500).json({ success: false, message: 'Database error' });
-      }
-      return res.status(200).json({ success: true, learnersCount: rows[0].learnersCount });
-    }
-  );
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
