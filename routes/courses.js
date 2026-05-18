@@ -78,6 +78,21 @@ function auth(req, res, next) {
   });
 }
 
+function authAny(req, res, next) {
+  const header = req.headers['authorization'];
+  if (!header)
+    return res.status(401).json({ success: false, message: 'No token provided' });
+
+  const token = header.split(' ')[1];
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err)
+      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+    req.userId   = decoded.id;
+    req.userRole = decoded.role;
+    next();
+  });
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses  —  Create a new course
 //
@@ -164,7 +179,7 @@ router.get('/', auth, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/all  —  All courses (admin + teacher)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/all', auth, (req, res) => {
+router.get('/all', authAny, (req, res) => {
   const sql = `
     SELECT c.id, c.title, c.description,
            c.course_type AS courseType,
