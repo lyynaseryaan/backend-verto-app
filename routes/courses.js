@@ -164,7 +164,7 @@ router.get('/', auth, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/all  —  All courses (admin + teacher)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/all', authAny, (req, res) => {
+router.get('/all', auth, (req, res) => {
   const sql = `
     SELECT c.id, c.title, c.description,
            c.course_type AS courseType,
