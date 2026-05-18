@@ -160,6 +160,26 @@ router.get('/', auth, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/stats  —  Teacher dashboard statistics
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/all  —  All courses (admin + teacher)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/all', authAny, (req, res) => {
+  const sql = `
+    SELECT c.id, c.title, c.description,
+           c.course_type AS courseType,
+           c.chapter,
+           c.image_path  AS imagePath,
+           c.created_at  AS createdAt
+    FROM courses c ORDER BY c.created_at DESC`;
+
+  db.query(sql, (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    res.status(200).json({ success: true, courses: rows });
+  });
+});
+
+
 router.get('/stats', auth, (req, res) => {
   const teacherId = req.userId;
 
