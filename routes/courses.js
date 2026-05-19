@@ -182,10 +182,15 @@ router.get('/', auth, (req, res) => {
 router.get('/all', authAny, (req, res) => {
   const sql = `
     SELECT c.id, c.title, c.description,
-           c.course_type AS courseType,
+           'Science'     AS courseType,
            c.chapter,
            c.image_path  AS imagePath,
-           c.created_at  AS createdAt
+           c.created_at  AS createdAt,
+           (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = c.id)           AS learnersCount,
+           (SELECT COUNT(*) FROM likes      l WHERE l.course_id = c.id)            AS likesCount,
+           (SELECT COUNT(*) FROM comments   cm WHERE cm.course_id = c.id)          AS commentsCount,
+           (SELECT ROUND(AVG(r.rating_value),1) FROM ratings r WHERE r.course_id = c.id) AS avgRating,
+           (SELECT COUNT(*) FROM ratings    r WHERE r.course_id = c.id)            AS ratingsCount
     FROM courses c ORDER BY c.created_at DESC`;
 
   db.query(sql, (err, rows) => {
