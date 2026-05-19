@@ -63,8 +63,8 @@ router.get('/unread-count', verifyToken, async (req, res) => {
     );
     res.json({ count: rows[0].count });
   } catch (err) {
-    console.error('[GET /notifications/unread-count]', err);
-    res.status(500).json({ error: 'Database error' });
+    console.error('[GET /notifications/unread-count] FULL ERROR:', err.message, err.stack);
+    res.status(500).json({ error: 'Database error', detail: err.message });
   }
 });
 
