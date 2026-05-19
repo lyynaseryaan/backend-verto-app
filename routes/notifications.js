@@ -25,7 +25,7 @@ const query = (sql, params) =>
 // ─── GET /api/notifications ─────────────────────────────────────────────────
 // Returns paginated notifications + total/unread counts for the current user.
 router.get('/', verifyToken, async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.userId;
   const limit  = Math.min(parseInt(req.query.limit)  || 20, 100); // cap at 100
   const offset = Math.max(parseInt(req.query.offset) || 0,  0);
 
@@ -59,7 +59,7 @@ router.get('/unread-count', verifyToken, async (req, res) => {
   try {
     const rows = await query(
       'SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND is_read = 0',
-      [req.user.id]
+      [req.userId]
     );
     res.json({ count: rows[0].count });
   } catch (err) {
@@ -74,7 +74,7 @@ router.patch('/read-all', verifyToken, async (req, res) => {
   try {
     await query(
       'UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0',
-      [req.user.id]
+      [req.userId]
     );
     res.json({ success: true });
   } catch (err) {
@@ -91,7 +91,7 @@ router.patch('/:id/read', verifyToken, async (req, res) => {
   try {
     const result = await query(
       'UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?',
-      [id, req.user.id]
+      [id, req.userId]
     );
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Notification not found' });
     res.json({ success: true });
@@ -106,7 +106,7 @@ router.patch('/:id/read', verifyToken, async (req, res) => {
 // IMPORTANT: declared before /:id so the plain DELETE / is not shadowed.
 router.delete('/', verifyToken, async (req, res) => {
   try {
-    await query('DELETE FROM notifications WHERE user_id = ?', [req.user.id]);
+    await query('DELETE FROM notifications WHERE user_id = ?', [req.userId]);
     res.json({ success: true });
   } catch (err) {
     console.error('[DELETE /notifications]', err);
@@ -122,7 +122,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const result = await query(
       'DELETE FROM notifications WHERE id = ? AND user_id = ?',
-      [id, req.user.id]
+      [id, req.userId]
     );
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Notification not found' });
     res.json({ success: true });
@@ -146,7 +146,7 @@ router.post('/test', verifyToken, async (req, res) => {
 
   try {
     const id = await NotificationService.create(
-      req.user.id,
+      req.userId,
       notifType,
       title   || 'Test Notification',
       message || 'This is a test notification.'
