@@ -143,6 +143,39 @@ router.post('/', auth, (req, res) => {
 //          without needing fallback logic
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+router.get('/', auth, (req, res) => {
+  const sql = `
+    SELECT
+      c.id,
+      c.title,
+      c.description,
+      c.course_type   AS courseType,
+      c.chapter,
+      c.image_path    AS imagePath,
+      c.created_at    AS createdAt,
+      c.updated_at    AS updatedAt,
+      COUNT(DISTINCT cl.id) AS levelsCount
+    FROM courses c
+    LEFT JOIN course_levels cl ON cl.course_id = c.id
+    WHERE c.teacher_id = ?
+    GROUP BY c.id
+    ORDER BY c.created_at DESC`;
+
+  db.query(sql, [req.userId], (err, rows) => {
+    if (err) {
+      console.error('DB error fetching courses:', err);
+      return res.status(500).json({ success: false, message: 'Database error' });
+    }
+    res.status(200).json({ success: true, courses: rows });
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/:id  —  One course with levels + quiz questions
+//
+//  ✅ FIX: Return camelCase aliases so Flutter CourseDetailModel and
+//          LevelModel.fromJson work without fallback logic
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/all  —  All courses (admin + teacher)
@@ -215,40 +248,6 @@ router.get('/teacher-comments', auth, (req, res) => {
     return res.status(200).json({ success: true, comments: rows });
   });
 });
-
-router.get('/', auth, (req, res) => {
-  const sql = `
-    SELECT
-      c.id,
-      c.title,
-      c.description,
-      c.course_type   AS courseType,
-      c.chapter,
-      c.image_path    AS imagePath,
-      c.created_at    AS createdAt,
-      c.updated_at    AS updatedAt,
-      COUNT(DISTINCT cl.id) AS levelsCount
-    FROM courses c
-    LEFT JOIN course_levels cl ON cl.course_id = c.id
-    WHERE c.teacher_id = ?
-    GROUP BY c.id
-    ORDER BY c.created_at DESC`;
-
-  db.query(sql, [req.userId], (err, rows) => {
-    if (err) {
-      console.error('DB error fetching courses:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-    res.status(200).json({ success: true, courses: rows });
-  });
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/courses/:id  —  One course with levels + quiz questions
-//
-//  ✅ FIX: Return camelCase aliases so Flutter CourseDetailModel and
-//          LevelModel.fromJson work without fallback logic
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 router.get('/:id', auth, (req, res) => {
   const courseSql = `
@@ -644,5 +643,7 @@ router.post('/:id/levels', auth, (req, res) => {
     );
   });
 });
+
+
 
 module.exports = router;
