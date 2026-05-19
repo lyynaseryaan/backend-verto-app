@@ -2,6 +2,7 @@
 //  routes/studentCourse.js  –  Verto LMS
 // ============================================================
 const express = require('express');
+const NotificationService = require('../services/notificationService');
 const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
@@ -301,6 +302,23 @@ router.post('/:id/enroll', auth, (req, res) => {
           console.error('[enrollment] insert error:', err2);
           return res.status(500).json({ success: false, message: 'Database error' });
         }
+        // ── Notify teacher ──────────────────────────────
+        db.query(
+          `SELECT c.teacher_id, c.title, u.name AS sname
+           FROM courses c INNER JOIN users u ON u.id = ?
+           WHERE c.id = ?`,
+          [req.userId, courseId],
+          (errN, rowsN) => {
+            if (!errN && rowsN.length) {
+              const { teacher_id, title, sname } = rowsN[0];
+              NotificationService.create(
+                teacher_id, 'new_enrollment',
+                'New Student Enrolled 🎓',
+                `${sname} enrolled in "${title}"`
+              ).catch(() => {});
+            }
+          }
+        );
         return res.status(200).json({
           success: true, isEnrolled: true, message: 'Enrolled successfully',
         });
@@ -380,49 +398,90 @@ router.put('/:id/progress', auth, (req, res) => {
 
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/student/courses/:id/interactions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/:id/interactions', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid id' });
+  const userId = req.userId;
+  db.query(
+    `SELECT
+       (SELECT COUNT(*) FROM likes    WHERE course_id = ?)  AS likes_count,
+       (SELECT COUNT(*) FROM likes    WHERE course_id = ? AND student_id = ?) AS user_liked,
+       (SELECT ROUND(AVG(rating_value),1) FROM ratings WHERE course_id = ?) AS avg_rating,
+       (SELECT COUNT(*) FROM ratings  WHERE course_id = ?)  AS ratings_count,
+       (SELECT rating_value FROM ratings WHERE course_id = ? AND student_id = ? LIMIT 1) AS user_rating,
+       (SELECT COUNT(*) FROM comments WHERE course_id = ?)  AS comments_count`,
+    [courseId, courseId, userId, courseId, courseId, courseId, userId, courseId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      const r = rows[0];
+      return res.status(200).json({
+        success: true,
+        likes_count:    r.likes_count    || 0,
+        is_liked:       r.user_liked     > 0,
+        avg_rating:     parseFloat(r.avg_rating || 0),
+        ratings_count:  r.ratings_count  || 0,
+        user_rating:    r.user_rating    || 0,
+        comments_count: r.comments_count || 0,
+      });
+    }
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/student/courses/:id/comments
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/:id/comments', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  const page     = Math.max(1, parseInt(req.query.page)  || 1);
+  const limit    = Math.min(50, parseInt(req.query.limit) || 20);
+  const offset   = (page - 1) * limit;
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid id' });
+  db.query('SELECT COUNT(*) AS total FROM comments WHERE course_id = ?', [courseId], (err, countRows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    const total = countRows[0].total;
+    db.query(
+      `SELECT c.id, c.student_id, c.comment_text, c.created_at, u.name AS student_name
+       FROM comments c INNER JOIN users u ON u.id = c.student_id
+       WHERE c.course_id = ? ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+      [courseId, limit, offset],
+      (err2, rows) => {
+        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+        return res.status(200).json({
+          success: true, comments: rows, total, page,
+          total_pages: Math.ceil(total / limit),
+        });
+      }
+    );
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/student/courses/:id/quiz
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/:id/quiz', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   const level    = (req.query.level || '').trim();
-  if (isNaN(courseId))
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  if (!level || !VALID_LEVELS.includes(level))
-    return res.status(400).json({ success: false, message: 'level param required' });
-
-  db.query(
-    'SELECT id FROM course_levels WHERE course_id = ? AND level = ?',
-    [courseId, level],
-    (err, levelRows) => {
-      if (err) return res.status(500).json({ success: false, message: 'Database error' });
-      if (!levelRows.length)
-        return res.status(404).json({ success: false, message: 'No content found for this level' });
-
-      const courseLevelId = levelRows[0].id;
-      db.query(
-        'SELECT id, question_text, options FROM quiz_questions WHERE course_level_id = ? ORDER BY id',
-        [courseLevelId],
-        (err2, questions) => {
-          if (err2) return res.status(500).json({ success: false, message: 'Database error' });
-          const parsed = questions.map(q => {
-            let options = q.options;
-            try { if (typeof options === 'string') options = JSON.parse(options); } catch (_) { options = []; }
-            return { id: q.id, question_text: q.question_text, options };
-          });
-          db.query('SELECT title FROM courses WHERE id = ?', [courseId], (err3, courseRows) => {
-            const title = (!err3 && courseRows.length) ? courseRows[0].title : 'Quiz';
-            return res.status(200).json({
-              success: true,
-              quiz_title: `${title} - ${level}`,
-              course_level_id: courseLevelId,
-              level,
-              questions: parsed,
-            });
-          });
-        }
-      );
-    }
-  );
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  if (!level || !VALID_LEVELS.includes(level)) return res.status(400).json({ success: false, message: 'level param required' });
+  db.query('SELECT id FROM course_levels WHERE course_id = ? AND level = ?', [courseId, level], (err, levelRows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    if (!levelRows.length) return res.status(404).json({ success: false, message: 'No content found for this level' });
+    const courseLevelId = levelRows[0].id;
+    db.query('SELECT id, question_text, options FROM quiz_questions WHERE course_level_id = ? ORDER BY id', [courseLevelId], (err2, questions) => {
+      if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+      const parsed = questions.map(q => {
+        let options = q.options;
+        try { if (typeof options === 'string') options = JSON.parse(options); } catch (_) { options = []; }
+        return { id: q.id, question_text: q.question_text, options };
+      });
+      db.query('SELECT title FROM courses WHERE id = ?', [courseId], (err3, courseRows) => {
+        const title = (!err3 && courseRows.length) ? courseRows[0].title : 'Quiz';
+        return res.status(200).json({ success: true, quiz_title: `${title} - ${level}`, course_level_id: courseLevelId, level, questions: parsed });
+      });
+    });
+  });
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -432,14 +491,10 @@ router.post('/:id/quiz/submit', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   const level    = (req.body.level || '').trim();
   const answers  = req.body.answers || [];
-  if (isNaN(courseId))
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  if (!answers.length)
-    return res.status(400).json({ success: false, message: 'answers array is required' });
-
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  if (!answers.length) return res.status(400).json({ success: false, message: 'answers array is required' });
   db.query(
-    `SELECT qq.id, qq.correct_answer_index
-     FROM quiz_questions qq
+    `SELECT qq.id, qq.correct_answer_index FROM quiz_questions qq
      INNER JOIN course_levels cl ON cl.id = qq.course_level_id
      WHERE cl.course_id = ? AND cl.level = ?`,
     [courseId, level],
@@ -449,19 +504,14 @@ router.post('/:id/quiz/submit', auth, (req, res) => {
       questions.forEach(q => { correctMap[q.id] = q.correct_answer_index; });
       let correct = 0, wrong = 0;
       const details = answers.map(a => {
-        const isCorrect = correctMap[a.question_id] !== undefined &&
-                          a.selected_index === correctMap[a.question_id];
+        const isCorrect = correctMap[a.question_id] !== undefined && a.selected_index === correctMap[a.question_id];
         if (a.selected_index >= 0) { if (isCorrect) correct++; else wrong++; }
-        return { question_id: a.question_id, selected_index: a.selected_index,
-                 correct_index: correctMap[a.question_id] ?? null, is_correct: isCorrect };
+        return { question_id: a.question_id, selected_index: a.selected_index, correct_index: correctMap[a.question_id] ?? null, is_correct: isCorrect };
       });
-      const total           = questions.length;
+      const total = questions.length;
       const scorePercentage = total > 0 ? Math.round((correct / total) * 100) : 0;
-      const passed          = scorePercentage >= 60;
-      return res.status(200).json({
-        success: true, total, correct, wrong,
-        score_percentage: scorePercentage, scorePercentage, passed, details, ai: null,
-      });
+      const passed = scorePercentage >= 60;
+      return res.status(200).json({ success: true, total, correct, wrong, score_percentage: scorePercentage, scorePercentage, passed, details, ai: null });
     }
   );
 });
