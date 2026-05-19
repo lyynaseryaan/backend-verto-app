@@ -19,6 +19,7 @@ const db          = require('../db');
 const jwt         = require('jsonwebtoken');
 const multer      = require('multer');
 const { storage } = require('../config/cloudinary');
+const NotificationService = require('../services/notificationService');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  CONSTANTS
@@ -78,20 +79,6 @@ function auth(req, res, next) {
   });
 }
 
-function authAny(req, res, next) {
-  const header = req.headers['authorization'];
-  if (!header)
-    return res.status(401).json({ success: false, message: 'No token provided' });
-  const token = header.split(' ')[1];
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err)
-      return res.status(403).json({ success: false, message: 'Invalid or expired token' });
-    req.userId   = decoded.id;
-    req.userRole = decoded.role;
-    next();
-  });
-}
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  POST /api/courses  —  Create a new course
 //
@@ -125,10 +112,17 @@ router.post('/', auth, (req, res) => {
           console.error('DB error creating course:', err);
           return res.status(500).json({ success: false, message: 'Database error' });
         }
+        const newCourseId = result.insertId;
+        // ── Notify teacher ──────────────────────────────
+        NotificationService.create(
+          req.userId, 'course_published',
+          'Course Published 📚',
+          `Your course "${title.trim()}" has been published successfully`
+        ).catch(() => {});
         res.status(201).json({
           success:  true,
           message:  'Course created',
-          courseId: result.insertId,
+          courseId: newCourseId,
           imagePath,
         });
       }
@@ -182,11 +176,8 @@ router.get('/', auth, (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/all', authAny, (req, res) => {
   const sql = `
-    SELECT c.id, c.title, c.description,
-           'Science'    AS courseType,
-           c.chapter,
-           c.image_path AS imagePath,
-           c.created_at AS createdAt,
+    SELECT c.id, c.title, c.description, 'Science' AS courseType,
+           c.chapter, c.image_path AS imagePath, c.created_at AS createdAt,
            (SELECT COUNT(*) FROM enrollments e  WHERE e.course_id  = c.id) AS learnersCount,
            (SELECT COUNT(*) FROM likes      l  WHERE l.course_id  = c.id) AS likesCount,
            (SELECT COUNT(*) FROM comments   cm WHERE cm.course_id = c.id) AS commentsCount,
@@ -203,28 +194,16 @@ router.get('/all', authAny, (req, res) => {
 //  GET /api/courses/stats  —  Teacher dashboard statistics
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/stats', auth, (req, res) => {
-  const teacherId = req.userId;
-  db.query('SELECT COUNT(*) AS coursesCount FROM courses WHERE teacher_id = ?', [teacherId], (err1, r1) => {
-    if (err1) return res.status(500).json({ success: false, message: 'Database error' });
-    db.query(
-      `SELECT COUNT(DISTINCT e.student_id) AS studentsCount
-       FROM enrollments e INNER JOIN courses c ON c.id = e.course_id WHERE c.teacher_id = ?`,
-      [teacherId], (err2, r2) => {
-        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
-        db.query(
-          `SELECT ROUND(AVG(e.progress) * 100) AS avgProgress
-           FROM enrollments e INNER JOIN courses c ON c.id = e.course_id WHERE c.teacher_id = ?`,
-          [teacherId], (err3, r3) => {
-            if (err3) return res.status(500).json({ success: false, message: 'Database error' });
-            return res.status(200).json({
-              success: true,
-              coursesCount:  r1[0].coursesCount,
-              studentsCount: r2[0].studentsCount,
-              avgProgress:   r3[0].avgProgress || 0,
-              subject:       'Science',
-            });
-          });
+  const t = req.userId;
+  db.query('SELECT COUNT(*) AS coursesCount FROM courses WHERE teacher_id = ?', [t], (e1, r1) => {
+    if (e1) return res.status(500).json({ success: false, message: 'Database error' });
+    db.query(`SELECT COUNT(DISTINCT e.student_id) AS studentsCount FROM enrollments e INNER JOIN courses c ON c.id = e.course_id WHERE c.teacher_id = ?`, [t], (e2, r2) => {
+      if (e2) return res.status(500).json({ success: false, message: 'Database error' });
+      db.query(`SELECT ROUND(AVG(e.progress)*100) AS avgProgress FROM enrollments e INNER JOIN courses c ON c.id = e.course_id WHERE c.teacher_id = ?`, [t], (e3, r3) => {
+        if (e3) return res.status(500).json({ success: false, message: 'Database error' });
+        return res.status(200).json({ success: true, coursesCount: r1[0].coursesCount, studentsCount: r2[0].studentsCount, avgProgress: r3[0].avgProgress || 0, subject: 'Science' });
       });
+    });
   });
 });
 
@@ -232,57 +211,34 @@ router.get('/stats', auth, (req, res) => {
 //  GET /api/courses/teacher-comments
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/teacher-comments', auth, (req, res) => {
-  const teacherId = req.userId;
-  const limit     = Math.min(50, parseInt(req.query.limit) || 20);
-  const sql = `
-    SELECT cc.id, cc.comment_text, cc.created_at,
-           c.title AS course_title, c.id AS course_id,
-           u.name  AS student_name
-    FROM comments cc
-    INNER JOIN courses c ON c.id  = cc.course_id
-    INNER JOIN users   u ON u.id  = cc.student_id
-    WHERE c.teacher_id = ?
-    ORDER BY cc.created_at DESC LIMIT ?`;
-  db.query(sql, [teacherId, limit], (err, rows) => {
-    if (err) return res.status(200).json({ success: true, comments: [], error: err.message });
-    return res.status(200).json({ success: true, comments: rows });
-  });
+  const limit = Math.min(50, parseInt(req.query.limit) || 20);
+  db.query(`SELECT cc.id, cc.comment_text, cc.created_at, c.title AS course_title, c.id AS course_id, u.name AS student_name FROM comments cc INNER JOIN courses c ON c.id = cc.course_id INNER JOIN users u ON u.id = cc.student_id WHERE c.teacher_id = ? ORDER BY cc.created_at DESC LIMIT ?`,
+    [req.userId, limit],
+    (err, rows) => {
+      if (err) return res.status(200).json({ success: true, comments: [], error: err.message });
+      return res.status(200).json({ success: true, comments: rows });
+    }
+  );
 });
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/teacher-stats  —  Profile stats for teacher
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 router.get('/teacher-stats', auth, (req, res) => {
-  const teacherId = req.userId;
   db.query(
-    `SELECT
-       COUNT(DISTINCT c.id)  AS coursesCount,
-       COUNT(DISTINCT e.student_id) AS studentsCount,
-       ROUND(AVG(r.rating_value), 1) AS avgRating,
-       COUNT(DISTINCT l.id)  AS totalLikes,
-       COUNT(DISTINCT cm.id) AS totalComments
-     FROM courses c
-     LEFT JOIN enrollments e  ON e.course_id  = c.id
-     LEFT JOIN ratings     r  ON r.course_id  = c.id
-     LEFT JOIN likes       l  ON l.course_id  = c.id
-     LEFT JOIN comments    cm ON cm.course_id = c.id
-     WHERE c.teacher_id = ?`,
-    [teacherId],
+    `SELECT COUNT(DISTINCT c.id) AS coursesCount, COUNT(DISTINCT e.student_id) AS studentsCount,
+            ROUND(AVG(r.rating_value),1) AS avgRating, COUNT(DISTINCT l.id) AS totalLikes, COUNT(DISTINCT cm.id) AS totalComments
+     FROM courses c LEFT JOIN enrollments e ON e.course_id = c.id LEFT JOIN ratings r ON r.course_id = c.id
+     LEFT JOIN likes l ON l.course_id = c.id LEFT JOIN comments cm ON cm.course_id = c.id WHERE c.teacher_id = ?`,
+    [req.userId],
     (err, rows) => {
       if (err) return res.status(500).json({ success: false, message: 'Database error' });
       const r = rows[0];
-      return res.status(200).json({
-        success:       true,
-        coursesCount:  r.coursesCount  || 0,
-        studentsCount: r.studentsCount || 0,
-        avgRating:     r.avgRating     || null,
-        totalLikes:    r.totalLikes    || 0,
-        totalComments: r.totalComments || 0,
-      });
+      return res.status(200).json({ success: true, coursesCount: r.coursesCount||0, studentsCount: r.studentsCount||0, avgRating: r.avgRating||null, totalLikes: r.totalLikes||0, totalComments: r.totalComments||0 });
     }
   );
 });
+
 
 router.get('/:id', auth, (req, res) => {
   const courseSql = `
@@ -433,6 +389,16 @@ router.put('/:id', auth, (req, res) => {
               console.error('DB error updating course:', err2);
               return res.status(500).json({ success: false, message: 'Database error' });
             }
+            // ── Notify teacher ──────────────────────────────
+            db.query('SELECT title FROM courses WHERE id = ?', [req.params.id], (errT, rowsT) => {
+              if (!errT && rowsT.length) {
+                NotificationService.create(
+                  req.userId, 'course_updated',
+                  'Course Updated ✏️',
+                  `Your course "${rowsT[0].title}" has been updated`
+                ).catch(() => {});
+              }
+            });
             res.status(200).json({
               success:   true,
               message:   'Course updated',
@@ -680,5 +646,132 @@ router.post('/:id/levels', auth, (req, res) => {
 });
 
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POST /api/courses/:id/like  —  Toggle like + notify teacher
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.post('/:id/like', authAny, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+
+  // Check if already liked
+  db.query('SELECT id FROM likes WHERE student_id = ? AND course_id = ?', [req.userId, courseId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+
+    if (rows.length) {
+      // Unlike
+      db.query('DELETE FROM likes WHERE student_id = ? AND course_id = ?', [req.userId, courseId], (err2) => {
+        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+        db.query('SELECT COUNT(*) AS cnt FROM likes WHERE course_id = ?', [courseId], (e, r) => {
+          res.status(200).json({ success: true, is_liked: false, likes_count: r?.[0]?.cnt || 0 });
+        });
+      });
+    } else {
+      // Like
+      db.query('INSERT INTO likes (student_id, course_id) VALUES (?, ?)', [req.userId, courseId], (err2) => {
+        if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+        // Notify teacher
+        db.query(
+          `SELECT c.teacher_id, c.title, u.name AS sname FROM courses c INNER JOIN users u ON u.id = ? WHERE c.id = ?`,
+          [req.userId, courseId],
+          (errN, rowsN) => {
+            if (!errN && rowsN.length) {
+              const { teacher_id, title, sname } = rowsN[0];
+              NotificationService.create(
+                teacher_id, 'course_liked',
+                'New Like ❤️',
+                `${sname} liked your course "${title}"`
+              ).catch(() => {});
+            }
+          }
+        );
+        db.query('SELECT COUNT(*) AS cnt FROM likes WHERE course_id = ?', [courseId], (e, r) => {
+          res.status(200).json({ success: true, is_liked: true, likes_count: r?.[0]?.cnt || 0 });
+        });
+      });
+    }
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POST /api/courses/:id/rate  —  Rate course + notify teacher
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.post('/:id/rate', authAny, (req, res) => {
+  const courseId    = parseInt(req.params.id);
+  const ratingValue = parseInt(req.body.rating_value);
+  if (isNaN(courseId) || ratingValue < 1 || ratingValue > 5)
+    return res.status(400).json({ success: false, message: 'Invalid course id or rating' });
+
+  db.query(
+    `INSERT INTO ratings (student_id, course_id, rating_value)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE rating_value = VALUES(rating_value)`,
+    [req.userId, courseId, ratingValue],
+    (err) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      db.query(
+        'SELECT ROUND(AVG(rating_value),1) AS avg, COUNT(*) AS cnt FROM ratings WHERE course_id = ?',
+        [courseId],
+        (err2, rows2) => {
+          if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+          // Notify teacher
+          db.query(
+            `SELECT c.teacher_id, c.title, u.name AS sname FROM courses c INNER JOIN users u ON u.id = ? WHERE c.id = ?`,
+            [req.userId, courseId],
+            (errN, rowsN) => {
+              if (!errN && rowsN.length) {
+                const { teacher_id, title, sname } = rowsN[0];
+                NotificationService.create(
+                  teacher_id, 'course_rated',
+                  `New Rating ${'⭐'.repeat(ratingValue)}`,
+                  `${sname} rated your course "${title}" ${ratingValue}/5`
+                ).catch(() => {});
+              }
+            }
+          );
+          res.status(200).json({
+            success: true,
+            user_rating:   ratingValue,
+            avg_rating:    rows2[0].avg  || 0,
+            ratings_count: rows2[0].cnt  || 0,
+          });
+        }
+      );
+    }
+  );
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  POST /api/courses/:id/comment  —  Add comment + notify teacher
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.post('/:id/comment', authAny, (req, res) => {
+  const courseId    = parseInt(req.params.id);
+  const commentText = (req.body.comment_text || '').trim();
+  if (isNaN(courseId) || !commentText)
+    return res.status(400).json({ success: false, message: 'Invalid input' });
+
+  db.query(
+    'INSERT INTO comments (student_id, course_id, comment_text) VALUES (?, ?, ?)',
+    [req.userId, courseId, commentText],
+    (err, result) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      // Notify teacher
+      db.query(
+        `SELECT c.teacher_id, c.title, u.name AS sname FROM courses c INNER JOIN users u ON u.id = ? WHERE c.id = ?`,
+        [req.userId, courseId],
+        (errN, rowsN) => {
+          if (!errN && rowsN.length) {
+            const { teacher_id, title, sname } = rowsN[0];
+            NotificationService.create(
+              teacher_id, 'new_comment',
+              'New Comment 💬',
+              `${sname} commented on "${title}": ${commentText.substring(0, 60)}${commentText.length > 60 ? '...' : ''}`
+            ).catch(() => {});
+          }
+        }
+      );
+      res.status(201).json({ success: true, comment_id: result.insertId });
+    }
+  );
+});
 
 module.exports = router;

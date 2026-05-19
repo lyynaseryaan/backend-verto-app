@@ -2,6 +2,7 @@
 //  routes/studentCourse.js  –  Verto LMS
 // ============================================================
 const express = require('express');
+const NotificationService = require('../services/notificationService');
 const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
@@ -74,7 +75,6 @@ function shapeCourse(row, req) {
     image_path:  buildFullUrl(req, row.image_path) || null,
     created_at:  row.created_at,
     has_content: row.level_id !== null,
-    learners_count: row.learners_count || 0,
     chapters:    row.chapter && row.level_id ? [{
       chapter_name: row.chapter,
       lessons:      lesson ? [lesson] : [],
@@ -120,7 +120,6 @@ router.get('/', auth, (req, res) => {
       SELECT
         c.id, c.title, c.description, c.course_type, c.chapter,
         c.image_path, c.created_at,
-        (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = c.id) AS learners_count,
         cl.id             AS level_id,
         cl.level, cl.video_url, cl.video_file_path,
         cl.text_content, cl.quiz_note, cl.pdf_course, cl.pdf_exercise
@@ -303,6 +302,23 @@ router.post('/:id/enroll', auth, (req, res) => {
           console.error('[enrollment] insert error:', err2);
           return res.status(500).json({ success: false, message: 'Database error' });
         }
+        // ── Notify teacher ──────────────────────────────
+        db.query(
+          `SELECT c.teacher_id, c.title, u.name AS sname
+           FROM courses c INNER JOIN users u ON u.id = ?
+           WHERE c.id = ?`,
+          [req.userId, courseId],
+          (errN, rowsN) => {
+            if (!errN && rowsN.length) {
+              const { teacher_id, title, sname } = rowsN[0];
+              NotificationService.create(
+                teacher_id, 'new_enrollment',
+                'New Student Enrolled 🎓',
+                `${sname} enrolled in "${title}"`
+              ).catch(() => {});
+            }
+          }
+        );
         return res.status(200).json({
           success: true, isEnrolled: true, message: 'Enrolled successfully',
         });
