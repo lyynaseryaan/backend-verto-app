@@ -249,6 +249,41 @@ router.get('/teacher-comments', auth, (req, res) => {
   });
 });
 
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/teacher-stats  —  Profile stats for teacher
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/teacher-stats', auth, (req, res) => {
+  const teacherId = req.userId;
+  db.query(
+    `SELECT
+       COUNT(DISTINCT c.id)  AS coursesCount,
+       COUNT(DISTINCT e.student_id) AS studentsCount,
+       ROUND(AVG(r.rating_value), 1) AS avgRating,
+       COUNT(DISTINCT l.id)  AS totalLikes,
+       COUNT(DISTINCT cm.id) AS totalComments
+     FROM courses c
+     LEFT JOIN enrollments e  ON e.course_id  = c.id
+     LEFT JOIN ratings     r  ON r.course_id  = c.id
+     LEFT JOIN likes       l  ON l.course_id  = c.id
+     LEFT JOIN comments    cm ON cm.course_id = c.id
+     WHERE c.teacher_id = ?`,
+    [teacherId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      const r = rows[0];
+      return res.status(200).json({
+        success:       true,
+        coursesCount:  r.coursesCount  || 0,
+        studentsCount: r.studentsCount || 0,
+        avgRating:     r.avgRating     || null,
+        totalLikes:    r.totalLikes    || 0,
+        totalComments: r.totalComments || 0,
+      });
+    }
+  );
+});
+
 router.get('/:id', auth, (req, res) => {
   const courseSql = `
     SELECT
