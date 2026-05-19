@@ -240,6 +240,40 @@ router.get('/stats', auth, (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  GET /api/courses/teacher-comments
+//  Returns latest comments on this teacher's courses
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+router.get('/teacher-comments', auth, (req, res) => {
+  const teacherId = req.userId;
+  const limit     = Math.min(50, parseInt(req.query.limit) || 20);
+
+  // Try course_comments table first, fallback to course_interactions_comments
+  const sql = `
+    SELECT
+      cc.id,
+      cc.comment_text,
+      cc.created_at,
+      c.title AS course_title,
+      c.id    AS course_id,
+      u.name  AS student_name
+    FROM comments cc
+    INNER JOIN courses c ON c.id = cc.course_id
+    INNER JOIN users   u ON u.id = cc.student_id
+    WHERE c.teacher_id = ?
+    ORDER BY cc.created_at DESC
+    LIMIT ?`;
+
+  db.query(sql, [teacherId, limit], (err, rows) => {
+    if (err) {
+      console.error('[teacher-comments] error:', err.message);
+      return res.status(200).json({ success: true, comments: [], error: err.message });
+    }
+    console.log('[teacher-comments] teacherId:', teacherId, 'rows:', rows.length);
+    return res.status(200).json({ success: true, comments: rows });
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  GET /api/courses/:id  —  One course with levels + quiz questions
 //
 //  ✅ FIX: Return camelCase aliases so Flutter CourseDetailModel and
@@ -641,39 +675,5 @@ router.post('/:id/levels', auth, (req, res) => {
   });
 });
 
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/courses/teacher-comments
-//  Returns latest comments on this teacher's courses
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/teacher-comments', auth, (req, res) => {
-  const teacherId = req.userId;
-  const limit     = Math.min(50, parseInt(req.query.limit) || 20);
-
-  // Try course_comments table first, fallback to course_interactions_comments
-  const sql = `
-    SELECT
-      cc.id,
-      cc.comment_text,
-      cc.created_at,
-      c.title AS course_title,
-      c.id    AS course_id,
-      u.name  AS student_name
-    FROM comments cc
-    INNER JOIN courses c ON c.id = cc.course_id
-    INNER JOIN users   u ON u.id = cc.student_id
-    WHERE c.teacher_id = ?
-    ORDER BY cc.created_at DESC
-    LIMIT ?`;
-
-  db.query(sql, [teacherId, limit], (err, rows) => {
-    if (err) {
-      console.error('[teacher-comments] error:', err.message);
-      return res.status(200).json({ success: true, comments: [], error: err.message });
-    }
-    console.log('[teacher-comments] teacherId:', teacherId, 'rows:', rows.length);
-    return res.status(200).json({ success: true, comments: rows });
-  });
-});
 
 module.exports = router;
