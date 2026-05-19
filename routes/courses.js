@@ -660,9 +660,8 @@ router.get('/teacher-comments', auth, (req, res) => {
       c.id    AS course_id,
       u.name  AS student_name
     FROM comments cc
-    INNER JOIN courses  c ON c.id = cc.course_id
-    INNER JOIN students s ON s.id = cc.student_id
-    INNER JOIN users    u ON u.id = s.user_id
+    INNER JOIN courses c ON c.id = cc.course_id
+    INNER JOIN users   u ON u.id = cc.student_id
     WHERE c.teacher_id = ?
     ORDER BY cc.created_at DESC
     LIMIT ?`;
@@ -670,9 +669,9 @@ router.get('/teacher-comments', auth, (req, res) => {
   db.query(sql, [teacherId, limit], (err, rows) => {
     if (err) {
       console.error('[teacher-comments] error:', err.message);
-      // Return empty array instead of error so Flutter shows "No comments"
       return res.status(200).json({ success: true, comments: [], error: err.message });
     }
+    console.log('[teacher-comments] teacherId:', teacherId, 'rows:', rows.length);
     return res.status(200).json({ success: true, comments: rows });
   });
 });
