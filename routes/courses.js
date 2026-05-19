@@ -656,12 +656,13 @@ router.get('/teacher-comments', auth, (req, res) => {
       cc.id,
       cc.comment_text,
       cc.created_at,
-      c.title         AS course_title,
-      c.id            AS course_id,
-      u.name          AS student_name
-    FROM course_comments cc
-    INNER JOIN courses c ON c.id = cc.course_id
-    INNER JOIN users   u ON u.id = cc.student_id
+      c.title AS course_title,
+      c.id    AS course_id,
+      u.name  AS student_name
+    FROM comments cc
+    INNER JOIN courses  c ON c.id = cc.course_id
+    INNER JOIN students s ON s.id = cc.student_id
+    INNER JOIN users    u ON u.id = s.user_id
     WHERE c.teacher_id = ?
     ORDER BY cc.created_at DESC
     LIMIT ?`;
