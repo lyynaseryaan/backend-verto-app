@@ -7,14 +7,10 @@ const router  = express.Router();
 const db      = require('../db');
 const jwt     = require('jsonwebtoken');
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  AUTH MIDDLEWARE
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function auth(req, res, next) {
   const header = req.headers['authorization'];
   if (!header)
     return res.status(401).json({ success: false, message: 'No token provided' });
-
   const token = header.split(' ')[1];
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err)
@@ -27,14 +23,9 @@ function auth(req, res, next) {
 
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced'];
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  HELPERS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function buildFullUrl(req, filePath) {
   if (!filePath) return null;
-  if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-    return filePath;
-  }
+  if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath;
   const clean = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
   return `${req.protocol}://${req.get('host')}/${clean}`;
 }
@@ -47,422 +38,190 @@ function videoType(url) {
 
 function shapeCourse(row, req) {
   const hasLevelContent = row.level_id !== null;
-
   const youtubeUrl    = row.video_url       || null;
-  const localVideoUrl = row.video_file_path
-    ? buildFullUrl(req, row.video_file_path)
-    : null;
-
-  const lesson = hasLevelContent
-    ? {
-        level:           row.level,
-        video_url:       youtubeUrl,
-        video_type_url:  videoType(youtubeUrl),
-        video_file_path: localVideoUrl,
-        video_type_file: localVideoUrl ? 'local' : null,
-        text_content:    row.text_content  || null,
-        quiz_note:       row.quiz_note     || null,
-        pdf_course:      buildFullUrl(req, row.pdf_course)    || null,
-        pdf_exercise:    buildFullUrl(req, row.pdf_exercise)  || null,
-      }
-    : null;
-
+  const localVideoUrl = row.video_file_path ? buildFullUrl(req, row.video_file_path) : null;
+  const lesson = hasLevelContent ? {
+    level: row.level, video_url: youtubeUrl, video_type_url: videoType(youtubeUrl),
+    video_file_path: localVideoUrl, video_type_file: localVideoUrl ? 'local' : null,
+    text_content: row.text_content || null, quiz_note: row.quiz_note || null,
+    pdf_course: buildFullUrl(req, row.pdf_course) || null,
+    pdf_exercise: buildFullUrl(req, row.pdf_exercise) || null,
+  } : null;
   return {
-    id:          row.id,
-    title:       row.title,
-    description: row.description || null,
-    course_type: row.course_type || null,
-    image_path:  buildFullUrl(req, row.image_path) || null,
-    created_at:  row.created_at,
-    has_content: row.level_id !== null,
-    chapters:    row.chapter && row.level_id ? [{
-      chapter_name: row.chapter,
-      lessons:      lesson ? [lesson] : [],
-    }] : [],
+    id: row.id, title: row.title, description: row.description || null,
+    course_type: row.course_type || null, image_path: buildFullUrl(req, row.image_path) || null,
+    created_at: row.created_at, has_content: row.level_id !== null,
+    chapters: row.chapter && row.level_id ? [{ chapter_name: row.chapter, lessons: lesson ? [lesson] : [] }] : [],
   };
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /api/student/courses
 router.get('/', auth, (req, res) => {
   const level = (req.query.level || '').trim();
-
-  if (!level || !VALID_LEVELS.includes(level)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Query param "level" is required: Beginner | Intermediate | Advanced',
-    });
-  }
-
-  const page        = Math.max(1, parseInt(req.query.page)  || 1);
-  const limit       = Math.min(50, parseInt(req.query.limit) || 20);
-  const offset      = (page - 1) * limit;
-  const search      = req.query.search ? `%${req.query.search.trim()}%` : null;
-  const type        = req.query.type   ? req.query.type.trim()          : null;
-  const conditions  = [];
-  const filterParams = [];
-
-  if (search) { conditions.push('c.title LIKE ?');    filterParams.push(search); }
-  if (type)   { conditions.push('c.course_type = ?'); filterParams.push(type);   }
-
-  const where    = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-  const countSql = `SELECT COUNT(DISTINCT c.id) AS total FROM courses c ${where}`;
-
-  db.query(countSql, filterParams, (countErr, countRows) => {
-    if (countErr) {
-      console.error('[studentCourse] count error:', countErr);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-
+  if (!level || !VALID_LEVELS.includes(level))
+    return res.status(400).json({ success: false, message: 'Query param "level" is required: Beginner | Intermediate | Advanced' });
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, parseInt(req.query.limit) || 20);
+  const offset = (page - 1) * limit;
+  const search = req.query.search ? `%${req.query.search.trim()}%` : null;
+  const type = req.query.type ? req.query.type.trim() : null;
+  const conditions = [], filterParams = [];
+  if (search) { conditions.push('c.title LIKE ?'); filterParams.push(search); }
+  if (type)   { conditions.push('c.course_type = ?'); filterParams.push(type); }
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  db.query(`SELECT COUNT(DISTINCT c.id) AS total FROM courses c ${where}`, filterParams, (countErr, countRows) => {
+    if (countErr) return res.status(500).json({ success: false, message: 'Database error' });
     const total = countRows[0].total;
-    const sql   = `
-      SELECT
-        c.id, c.title, c.description, c.course_type, c.chapter,
-        c.image_path, c.created_at,
-        cl.id             AS level_id,
-        cl.level, cl.video_url, cl.video_file_path,
-        cl.text_content, cl.quiz_note, cl.pdf_course, cl.pdf_exercise
-      FROM courses c
-      LEFT JOIN course_levels cl ON cl.course_id = c.id AND cl.level = ?
-      ${where}
-      ORDER BY c.created_at DESC
-      LIMIT ? OFFSET ?`;
-
+    const sql = `SELECT c.id, c.title, c.description, c.course_type, c.chapter, c.image_path, c.created_at,
+      cl.id AS level_id, cl.level, cl.video_url, cl.video_file_path, cl.text_content, cl.quiz_note, cl.pdf_course, cl.pdf_exercise
+      FROM courses c LEFT JOIN course_levels cl ON cl.course_id = c.id AND cl.level = ?
+      ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`;
     db.query(sql, [level, ...filterParams, limit, offset], (err, rows) => {
-      if (err) {
-        console.error('[studentCourse] fetch error:', err);
-        return res.status(500).json({ success: false, message: 'Database error' });
-      }
-      return res.status(200).json({
-        success: true,
-        level,
-        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-        courses: rows.map(row => shapeCourse(row, req)),
-      });
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      return res.status(200).json({ success: true, level, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }, courses: rows.map(row => shapeCourse(row, req)) });
     });
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/enrolled
-//  ⚠️  يجب أن يكون قبل /:id حتى لا يُفسَّر "enrolled" كـ id
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /api/student/courses/enrolled
 router.get('/enrolled', auth, (req, res) => {
-  const sql = `
-    SELECT
-      c.id, c.title, c.description, c.course_type,
-      c.image_path, c.created_at,
-      e.progress,
-      e.video_progress,
-      e.pdf_opened,
-      e.quiz_completed,
-      e.enrolled_at
-    FROM enrollments e
-    INNER JOIN courses c ON c.id = e.course_id
-    WHERE e.student_id = ?
-    ORDER BY e.enrolled_at DESC`;
-
-  db.query(sql, [req.userId], (err, rows) => {
-    if (err) {
-      console.error('[enrolled] fetch error:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-    return res.status(200).json({
-      success: true,
-      courses: rows.map(row => ({
-        id:             row.id,
-        title:          row.title,
-        description:    row.description  || null,
-        course_type:    row.course_type  || null,
-        image_path:     buildFullUrl(req, row.image_path) || null,
-        created_at:     row.created_at,
-        enrolled_at:    row.enrolled_at,
-        progress:       parseFloat((row.progress || 0).toFixed(2)),
-        video_progress: parseFloat((row.video_progress || 0).toFixed(2)),
-        pdf_opened:     row.pdf_opened     === 1,
-        quiz_completed: row.quiz_completed === 1,
-      })),
-    });
+  db.query(`SELECT c.id, c.title, c.description, c.course_type, c.image_path, c.created_at,
+    e.progress, e.video_progress, e.pdf_opened, e.quiz_completed, e.enrolled_at
+    FROM enrollments e INNER JOIN courses c ON c.id = e.course_id
+    WHERE e.student_id = ? ORDER BY e.enrolled_at DESC`, [req.userId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    return res.status(200).json({ success: true, courses: rows.map(row => ({
+      id: row.id, title: row.title, description: row.description || null,
+      course_type: row.course_type || null, image_path: buildFullUrl(req, row.image_path) || null,
+      created_at: row.created_at, enrolled_at: row.enrolled_at,
+      progress: parseFloat((row.progress || 0).toFixed(2)),
+      video_progress: parseFloat((row.video_progress || 0).toFixed(2)),
+      pdf_opened: row.pdf_opened === 1, quiz_completed: row.quiz_completed === 1,
+    })) });
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /api/student/courses/:id
 router.get('/:id', auth, (req, res) => {
-  const level    = (req.query.level || '').trim();
+  const level = (req.query.level || '').trim();
   const courseId = parseInt(req.params.id);
-
-  if (!level || !VALID_LEVELS.includes(level)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Query param "level" is required: Beginner | Intermediate | Advanced',
-    });
-  }
-  if (isNaN(courseId)) {
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  }
-
-  const sql = `
-    SELECT
-      c.id, c.title, c.description, c.course_type, c.chapter,
-      c.image_path, c.created_at,
-      cl.id             AS level_id,
-      cl.level, cl.video_url, cl.video_file_path,
-      cl.text_content, cl.quiz_note, cl.pdf_course, cl.pdf_exercise
-    FROM courses c
-    LEFT JOIN course_levels cl ON cl.course_id = c.id AND cl.level = ?
-    WHERE c.id = ?
-    LIMIT 1`;
-
-  db.query(sql, [level, courseId], (err, rows) => {
-    if (err) {
-      console.error('[studentCourse] single fetch error:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-    if (!rows.length) {
-      return res.status(404).json({ success: false, message: 'Course not found' });
-    }
-    return res.status(200).json({
-      success: true,
-      level,
-      course: shapeCourse(rows[0], req),
-    });
+  if (!level || !VALID_LEVELS.includes(level))
+    return res.status(400).json({ success: false, message: 'Query param "level" is required' });
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  db.query(`SELECT c.id, c.title, c.description, c.course_type, c.chapter, c.image_path, c.created_at,
+    cl.id AS level_id, cl.level, cl.video_url, cl.video_file_path, cl.text_content, cl.quiz_note, cl.pdf_course, cl.pdf_exercise
+    FROM courses c LEFT JOIN course_levels cl ON cl.course_id = c.id AND cl.level = ?
+    WHERE c.id = ? LIMIT 1`, [level, courseId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Course not found' });
+    return res.status(200).json({ success: true, level, course: shapeCourse(rows[0], req) });
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id/learners
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /api/student/courses/:id/learners
 router.get('/:id/learners', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
-  if (isNaN(courseId)) {
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  }
-
-  db.query(
-    'SELECT COUNT(*) AS learnersCount FROM enrollments WHERE course_id = ?',
-    [courseId],
-    (err, rows) => {
-      if (err) {
-        console.error('[learners] count error:', err);
-        return res.status(500).json({ success: false, message: 'Database error' });
-      }
-      return res.status(200).json({ success: true, learnersCount: rows[0].learnersCount });
-    }
-  );
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id/enrollment
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.get('/:id/enrollment', auth, (req, res) => {
-  const courseId = parseInt(req.params.id);
-  if (isNaN(courseId)) {
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  }
-
-  db.query(
-    'SELECT id FROM enrollments WHERE student_id = ? AND course_id = ?',
-    [req.userId, courseId],
-    (err, rows) => {
-      if (err) {
-        console.error('[enrollment] check error:', err);
-        return res.status(500).json({ success: false, message: 'Database error' });
-      }
-      return res.status(200).json({ success: true, isEnrolled: rows.length > 0 });
-    }
-  );
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  POST /api/student/courses/:id/enroll
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.post('/:id/enroll', auth, (req, res) => {
-  const courseId = parseInt(req.params.id);
-  if (isNaN(courseId)) {
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  }
-
-  db.query('SELECT id FROM courses WHERE id = ?', [courseId], (err, rows) => {
-    if (err) {
-      console.error('[enrollment] course lookup error:', err);
-      return res.status(500).json({ success: false, message: 'Database error' });
-    }
-    if (!rows.length) {
-      return res.status(404).json({ success: false, message: 'Course not found' });
-    }
-
-    db.query(
-      'INSERT IGNORE INTO enrollments (student_id, course_id) VALUES (?, ?)',
-      [req.userId, courseId],
-      (err2) => {
-        if (err2) {
-          console.error('[enrollment] insert error:', err2);
-          return res.status(500).json({ success: false, message: 'Database error' });
-        }
-        // ── Notify teacher ──────────────────────────────
-        db.query(
-          `SELECT c.teacher_id, c.title, u.name AS sname
-           FROM courses c INNER JOIN users u ON u.id = ?
-           WHERE c.id = ?`,
-          [req.userId, courseId],
-          (errN, rowsN) => {
-            if (!errN && rowsN.length) {
-              const { teacher_id, title, sname } = rowsN[0];
-              NotificationService.create(
-                teacher_id, 'new_enrollment',
-                'New Student Enrolled 🎓',
-                `${sname} enrolled in "${title}"`
-              ).catch(() => {});
-            }
-          }
-        );
-        return res.status(200).json({
-          success: true, isEnrolled: true, message: 'Enrolled successfully',
-        });
-      }
-    );
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  db.query('SELECT COUNT(*) AS learnersCount FROM enrollments WHERE course_id = ?', [courseId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    return res.status(200).json({ success: true, learnersCount: rows[0].learnersCount });
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  PUT /api/student/courses/:id/progress
-//  Body: { video_progress?: float, pdf_opened?: bool, quiz_completed?: bool }
-//  Progress formula: video×0.6 + pdf×0.2 + quiz×0.2
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.put('/:id/progress', auth, (req, res) => {
+// GET /api/student/courses/:id/enrollment
+router.get('/:id/enrollment', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
-  if (isNaN(courseId)) {
-    return res.status(400).json({ success: false, message: 'Invalid course id' });
-  }
-
-  // Fetch current progress first
-  db.query(
-    'SELECT video_progress, pdf_opened, quiz_completed FROM enrollments WHERE student_id = ? AND course_id = ?',
-    [req.userId, courseId],
-    (err, rows) => {
-      if (err) {
-        console.error('[progress] fetch error:', err);
-        return res.status(500).json({ success: false, message: 'Database error' });
-      }
-      if (!rows.length) {
-        return res.status(404).json({ success: false, message: 'Not enrolled in this course' });
-      }
-
-      const current = rows[0];
-
-      // Merge: only update what was sent, keep current values for the rest
-      const videoProgress  = req.body.video_progress  !== undefined
-        ? Math.min(1, Math.max(0, parseFloat(req.body.video_progress)))
-        : current.video_progress;
-
-      const pdfOpened      = req.body.pdf_opened      !== undefined
-        ? (req.body.pdf_opened ? 1 : 0)
-        : current.pdf_opened;
-
-      const quizCompleted  = req.body.quiz_completed  !== undefined
-        ? (req.body.quiz_completed ? 1 : 0)
-        : current.quiz_completed;
-
-      // Weighted progress: video 60% + pdf 20% + quiz 20%
-      const totalProgress  = (videoProgress * 0.6) + (pdfOpened * 0.2) + (quizCompleted * 0.2);
-
-      db.query(
-        `UPDATE enrollments
-         SET video_progress  = ?,
-             pdf_opened      = ?,
-             quiz_completed  = ?,
-             progress        = ?
-         WHERE student_id = ? AND course_id = ?`,
-        [videoProgress, pdfOpened, quizCompleted,
-         parseFloat(totalProgress.toFixed(4)), req.userId, courseId],
-        (err2) => {
-          if (err2) {
-            console.error('[progress] update error:', err2);
-            return res.status(500).json({ success: false, message: 'Database error' });
-          }
-          return res.status(200).json({
-            success:        true,
-            progress:       parseFloat(totalProgress.toFixed(2)),
-            video_progress: videoProgress,
-            pdf_opened:     pdfOpened === 1,
-            quiz_completed: quizCompleted === 1,
-          });
-        }
-      );
-    }
-  );
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  db.query('SELECT id FROM enrollments WHERE student_id = ? AND course_id = ?', [req.userId, courseId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    return res.status(200).json({ success: true, isEnrolled: rows.length > 0 });
+  });
 });
 
+// POST /api/student/courses/:id/enroll
+router.post('/:id/enroll', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  db.query('SELECT id FROM courses WHERE id = ?', [courseId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Course not found' });
+    db.query('INSERT IGNORE INTO enrollments (student_id, course_id) VALUES (?, ?)', [req.userId, courseId], (err2) => {
+      if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+      db.query(`SELECT c.teacher_id, c.title, u.name AS sname FROM courses c INNER JOIN users u ON u.id = ? WHERE c.id = ?`,
+        [req.userId, courseId], (errN, rowsN) => {
+          if (!errN && rowsN.length) {
+            const { teacher_id, title, sname } = rowsN[0];
+            NotificationService.create(teacher_id, 'new_enrollment', 'New Student Enrolled 🎓', `${sname} enrolled in "${title}"`).catch(() => {});
+          }
+        });
+      return res.status(200).json({ success: true, isEnrolled: true, message: 'Enrolled successfully' });
+    });
+  });
+});
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id/interactions
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PUT /api/student/courses/:id/progress
+router.put('/:id/progress', auth, (req, res) => {
+  const courseId = parseInt(req.params.id);
+  if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
+  db.query('SELECT video_progress, pdf_opened, quiz_completed FROM enrollments WHERE student_id = ? AND course_id = ?',
+    [req.userId, courseId], (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error' });
+      if (!rows.length) return res.status(404).json({ success: false, message: 'Not enrolled in this course' });
+      const current = rows[0];
+      const videoProgress = req.body.video_progress !== undefined ? Math.min(1, Math.max(0, parseFloat(req.body.video_progress))) : current.video_progress;
+      const pdfOpened = req.body.pdf_opened !== undefined ? (req.body.pdf_opened ? 1 : 0) : current.pdf_opened;
+      const quizCompleted = req.body.quiz_completed !== undefined ? (req.body.quiz_completed ? 1 : 0) : current.quiz_completed;
+      const totalProgress = (videoProgress * 0.6) + (pdfOpened * 0.2) + (quizCompleted * 0.2);
+      db.query(`UPDATE enrollments SET video_progress=?, pdf_opened=?, quiz_completed=?, progress=? WHERE student_id=? AND course_id=?`,
+        [videoProgress, pdfOpened, quizCompleted, parseFloat(totalProgress.toFixed(4)), req.userId, courseId], (err2) => {
+          if (err2) return res.status(500).json({ success: false, message: 'Database error' });
+          return res.status(200).json({ success: true, progress: parseFloat(totalProgress.toFixed(2)), video_progress: videoProgress, pdf_opened: pdfOpened === 1, quiz_completed: quizCompleted === 1 });
+        });
+    });
+});
+
+// GET /api/student/courses/:id/interactions
 router.get('/:id/interactions', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid id' });
   const userId = req.userId;
-  db.query(
-    `SELECT
-       (SELECT COUNT(*) FROM likes    WHERE course_id = ?)  AS likes_count,
-       (SELECT COUNT(*) FROM likes    WHERE course_id = ? AND student_id = ?) AS user_liked,
-       (SELECT ROUND(AVG(rating_value),1) FROM ratings WHERE course_id = ?) AS avg_rating,
-       (SELECT COUNT(*) FROM ratings  WHERE course_id = ?)  AS ratings_count,
-       (SELECT rating_value FROM ratings WHERE course_id = ? AND student_id = ? LIMIT 1) AS user_rating,
-       (SELECT COUNT(*) FROM comments WHERE course_id = ?)  AS comments_count`,
-    [courseId, courseId, userId, courseId, courseId, courseId, userId, courseId],
-    (err, rows) => {
+  db.query(`SELECT (SELECT COUNT(*) FROM likes WHERE course_id=?) AS likes_count,
+    (SELECT COUNT(*) FROM likes WHERE course_id=? AND student_id=?) AS user_liked,
+    (SELECT ROUND(AVG(rating_value),1) FROM ratings WHERE course_id=?) AS avg_rating,
+    (SELECT COUNT(*) FROM ratings WHERE course_id=?) AS ratings_count,
+    (SELECT rating_value FROM ratings WHERE course_id=? AND student_id=? LIMIT 1) AS user_rating,
+    (SELECT COUNT(*) FROM comments WHERE course_id=?) AS comments_count`,
+    [courseId, courseId, userId, courseId, courseId, courseId, userId, courseId], (err, rows) => {
       if (err) return res.status(500).json({ success: false, message: 'Database error' });
       const r = rows[0];
-      return res.status(200).json({
-        success: true,
-        likes_count:    r.likes_count    || 0,
-        is_liked:       r.user_liked     > 0,
-        avg_rating:     parseFloat(r.avg_rating || 0),
-        ratings_count:  r.ratings_count  || 0,
-        user_rating:    r.user_rating    || 0,
-        comments_count: r.comments_count || 0,
-      });
-    }
-  );
+      return res.status(200).json({ success: true, likes_count: r.likes_count||0, is_liked: r.user_liked>0, avg_rating: parseFloat(r.avg_rating||0), ratings_count: r.ratings_count||0, user_rating: r.user_rating||0, comments_count: r.comments_count||0 });
+    });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id/comments
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /api/student/courses/:id/comments
 router.get('/:id/comments', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
-  const page     = Math.max(1, parseInt(req.query.page)  || 1);
-  const limit    = Math.min(50, parseInt(req.query.limit) || 20);
-  const offset   = (page - 1) * limit;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, parseInt(req.query.limit) || 20);
+  const offset = (page - 1) * limit;
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid id' });
   db.query('SELECT COUNT(*) AS total FROM comments WHERE course_id = ?', [courseId], (err, countRows) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error' });
     const total = countRows[0].total;
-    db.query(
-      `SELECT c.id, c.student_id, c.comment_text, c.created_at, u.name AS student_name
-       FROM comments c INNER JOIN users u ON u.id = c.student_id
-       WHERE c.course_id = ? ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
-      [courseId, limit, offset],
-      (err2, rows) => {
+    db.query(`SELECT c.id, c.student_id, c.comment_text, c.created_at, u.name AS student_name
+      FROM comments c INNER JOIN users u ON u.id = c.student_id
+      WHERE c.course_id = ? ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
+      [courseId, limit, offset], (err2, rows) => {
         if (err2) return res.status(500).json({ success: false, message: 'Database error' });
-        return res.status(200).json({
-          success: true, comments: rows, total, page,
-          total_pages: Math.ceil(total / limit),
-        });
-      }
-    );
+        return res.status(200).json({ success: true, comments: rows, total, page, total_pages: Math.ceil(total / limit) });
+      });
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  GET /api/student/courses/:id/quiz
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /api/student/courses/:id/quiz
 router.get('/:id/quiz', auth, (req, res) => {
   const courseId = parseInt(req.params.id);
-  const level    = (req.query.level || '').trim();
+  const level = (req.query.level || '').trim();
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
   if (!level || !VALID_LEVELS.includes(level)) return res.status(400).json({ success: false, message: 'level param required' });
   db.query('SELECT id FROM course_levels WHERE course_id = ? AND level = ?', [courseId, level], (err, levelRows) => {
@@ -484,36 +243,75 @@ router.get('/:id/quiz', auth, (req, res) => {
   });
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  POST /api/student/courses/:id/quiz/submit
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-router.post('/:id/quiz/submit', auth, (req, res) => {
+// POST /api/student/courses/:id/quiz/submit  ✅ with AI Coach
+router.post('/:id/quiz/submit', auth, async (req, res) => {
   const courseId = parseInt(req.params.id);
   const level    = (req.body.level || '').trim();
   const answers  = req.body.answers || [];
   if (isNaN(courseId)) return res.status(400).json({ success: false, message: 'Invalid course id' });
   if (!answers.length) return res.status(400).json({ success: false, message: 'answers array is required' });
-  db.query(
-    `SELECT qq.id, qq.correct_answer_index FROM quiz_questions qq
-     INNER JOIN course_levels cl ON cl.id = qq.course_level_id
-     WHERE cl.course_id = ? AND cl.level = ?`,
-    [courseId, level],
-    (err, questions) => {
-      if (err) return res.status(500).json({ success: false, message: 'Database error' });
-      const correctMap = {};
-      questions.forEach(q => { correctMap[q.id] = q.correct_answer_index; });
-      let correct = 0, wrong = 0;
-      const details = answers.map(a => {
-        const isCorrect = correctMap[a.question_id] !== undefined && a.selected_index === correctMap[a.question_id];
-        if (a.selected_index >= 0) { if (isCorrect) correct++; else wrong++; }
-        return { question_id: a.question_id, selected_index: a.selected_index, correct_index: correctMap[a.question_id] ?? null, is_correct: isCorrect };
+
+  const query = (sql, params) => new Promise((resolve, reject) =>
+    db.query(sql, params, (err, result) => err ? reject(err) : resolve(result)));
+
+  try {
+    const questions = await query(
+      `SELECT qq.id, qq.question_text, qq.correct_answer_index, qq.options
+       FROM quiz_questions qq INNER JOIN course_levels cl ON cl.id = qq.course_level_id
+       WHERE cl.course_id = ? AND cl.level = ?`, [courseId, level]);
+
+    const correctMap = {}, questionMap = {};
+    questions.forEach(q => {
+      correctMap[q.id] = q.correct_answer_index;
+      let options = q.options;
+      try { if (typeof options === 'string') options = JSON.parse(options); } catch (_) { options = []; }
+      questionMap[q.id] = { text: q.question_text, options };
+    });
+
+    let correct = 0, wrong = 0;
+    const details = answers.map(a => {
+      const isCorrect = correctMap[a.question_id] !== undefined && a.selected_index === correctMap[a.question_id];
+      if (a.selected_index >= 0) { if (isCorrect) correct++; else wrong++; }
+      return { question_id: a.question_id, selected_index: a.selected_index, correct_index: correctMap[a.question_id] ?? null, is_correct: isCorrect };
+    });
+
+    const total = questions.length;
+    const scorePercentage = total > 0 ? Math.round((correct / total) * 100) : 0;
+    const passed = scorePercentage >= 60;
+
+    // ── AI Coach via Groq ──────────────────────────────
+    let ai = null;
+    try {
+      const Groq = require('groq-sdk');
+      const groq = new Groq({ apiKey: process.env.GROQ_API_KEY2 });
+      const wrongAnswers = details.filter(d => !d.is_correct && d.selected_index >= 0);
+      const wrongSummary = wrongAnswers.map(d => {
+        const q = questionMap[d.question_id];
+        if (!q) return '';
+        return `Q: ${q.text}\nYour answer: ${q.options[d.selected_index] || '?'}\nCorrect: ${q.options[d.correct_index] || '?'}`;
+      }).filter(Boolean).join('\n\n');
+
+      const prompt = scorePercentage === 100
+        ? `Student scored 100% on a ${level} quiz. Give a short congratulation and suggest next topic. JSON only: {"coachMessage":"...","nextStepMessage":"...","explanations":[]}`
+        : wrongAnswers.length === 0
+        ? `Student scored ${scorePercentage}% on a ${level} quiz. Give encouragement. JSON only: {"coachMessage":"...","nextStepMessage":"...","explanations":[]}`
+        : `Student scored ${scorePercentage}% on a ${level} quiz. Wrong answers:\n${wrongSummary}\n\nJSON only: {"coachMessage":"...","nextStepMessage":"...","explanations":[{"question":"...","explanation":"..."}]}`;
+
+      const completion = await groq.chat.completions.create({
+        model: 'llama-3.1-8b-instant',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 600, temperature: 0.7,
       });
-      const total = questions.length;
-      const scorePercentage = total > 0 ? Math.round((correct / total) * 100) : 0;
-      const passed = scorePercentage >= 60;
-      return res.status(200).json({ success: true, total, correct, wrong, score_percentage: scorePercentage, scorePercentage, passed, details, ai: null });
+      const parsed = JSON.parse(completion.choices[0]?.message?.content?.replace(/```json|```/g, '').trim() || '{}');
+      ai = { coachMessage: parsed.coachMessage || '', nextStepMessage: parsed.nextStepMessage || '', nextStep: 'proceed', explanations: parsed.explanations || [] };
+    } catch (aiErr) {
+      console.warn('AI coach error:', aiErr.message);
     }
-  );
+
+    return res.status(200).json({ success: true, total, correct, wrong, score_percentage: scorePercentage, scorePercentage, passed, details, ai });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Database error' });
+  }
 });
 
 module.exports = router;
